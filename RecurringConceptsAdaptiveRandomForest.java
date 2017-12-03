@@ -32,9 +32,17 @@ import com.github.javacliparser.FloatOption;
 import com.github.javacliparser.FlagOption;
 import com.github.javacliparser.IntOption;
 import com.github.javacliparser.MultiChoiceOption;
+import com.sun.org.apache.xalan.internal.xsltc.compiler.sym;
+
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.Map;
 import java.util.concurrent.Callable;
+import java.util.concurrent.ConcurrentHashMap;
 
 import moa.classifiers.trees.ARFHoeffdingTree;
 import moa.evaluation.BasicClassificationPerformanceEvaluator;
@@ -79,11 +87,11 @@ import moa.classifiers.core.driftdetection.ChangeDetector;
  * @author Heitor Murilo Gomes (heitor_murilo_gomes at yahoo dot com dot br)
  * @version $Revision: 1 $
  */
-public class AdaptiveRandomForest extends AbstractClassifier implements MultiClassClassifier {
+public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier implements MultiClassClassifier {
 
     @Override
     public String getPurposeString() {
-        return "Adaptive Random Forest algorithm for evolving data streams from Gomes et al.";
+        return "Recurring Concepts Adaptive Random Forest algorithm for evolving data streams from Suarez-Cetrulo et al.";
     }
     
     private static final long serialVersionUID = 1L;
@@ -125,6 +133,29 @@ public class AdaptiveRandomForest extends AbstractClassifier implements MultiCla
     public FlagOption disableBackgroundLearnerOption = new FlagOption("disableBackgroundLearner", 'q', 
         "Should use bkg learner? If disabled then reset tree immediately.");
     
+	// ////////////////////////////////////////////////
+	// ADDED IN RCARF by @suarezcetrulo
+	// ////////////////////////////////////////////////
+    public FlagOption disableRecurringDriftDetectionOption = new FlagOption("disableRecurringDriftDetection", 'r', 
+            "Should save old learners to compare against in the future? If disabled then recurring concepts are not handled explicitely.");
+    
+    public FlagOption rememberConceptWindowOption = new FlagOption("rememberConceptWindow", 'i', 
+            "Should remember last window size when retrieving a concept? If disabled then retrieved concepts will have a default window size.");
+    
+    public IntOption defaultWindowOption = new IntOption("defaultWindow", 'd', 
+            "Number of rows by default in Dynamic Sliding Windows.", 10, 1, Integer.MAX_VALUE);
+    
+    public IntOption windowIncrementsOption = new IntOption("windowIncrements", 'c', 
+            "Size of the increments or decrements in Dynamic Sliding Windows.", 1, 1, Integer.MAX_VALUE);
+    
+    public IntOption minWindowSizeOption = new IntOption("minWindowSize", 'z', 
+            "Minimum window size in Dynamic Sliding Windows.", 5, 1, Integer.MAX_VALUE);
+    
+    public FloatOption thresholdOption = new FloatOption("thresholdOption", 't', 
+            "Decision threshold for recurring concepts (-1 = threshold option disabled).", 0.65, -1, Float.MAX_VALUE);
+    
+	// ////////////////////////////////////////////////
+	// ////////////////////////////////////////////////
     protected static final int FEATURES_M = 0;
     protected static final int FEATURES_SQRT = 1;
     protected static final int FEATURES_SQRT_INV = 2;
@@ -228,13 +259,32 @@ public class AdaptiveRandomForest extends AbstractClassifier implements MultiCla
         return null;
     }
 
+	// ////////////////////////////////////////////////
+	// ADDED IN RCARF by @suarezcetrulo
+	// ////////////////////////////////////////////////
+    // Set Window related flag to static concept history object to avoid adding them to every method.
+    // These are static and global, and should not change during the execution.
+    protected void setRCARFFlags() {
+    		 ConceptHistory.setRememberWindowFlag(this.rememberConceptWindowOption.isSet()? true: false);   
+    		 ConceptHistory.setDefaultWindowValue(this.defaultWindowOption.getValue());    	
+    		 ConceptHistory.setWindowIncrementsValue(this.windowIncrementsOption.getValue());    	
+    		 ConceptHistory.setMinWindowSizeValue(this.minWindowSizeOption.getValue());  
+    		 ConceptHistory.setThresholdValue(this.thresholdOption.getValue());
+    }
+	// ////////////////////////////////////////////////
+	// ////////////////////////////////////////////////
+    
     protected void initEnsemble(Instance instance) {
+    	
+    	
+    		setRCARFFlags();
+    	
         // Init the ensemble.
         int ensembleSize = this.ensembleSizeOption.getValue();
         this.ensemble = new ARFBaseLearner[ensembleSize];
         
         // TODO: this should be an option with default = BasicClassificationPerformanceEvaluator
-//        BasicClassificationPerformanceEvaluator classificationEvaluator = (BasicClassificationPerformanceEvaluator) getPreparedClassOption(this.evaluatorOption);
+//      BasicClassificationPerformanceEvaluator classificationEvaluator = (BasicClassificationPerformanceEvaluator) getPreparedClassOption(this.evaluatorOption);
         BasicClassificationPerformanceEvaluator classificationEvaluator = new BasicClassificationPerformanceEvaluator();
         
         this.subspaceSize = this.mFeaturesPerTreeSizeOption.getValue();
@@ -288,7 +338,11 @@ public class AdaptiveRandomForest extends AbstractClassifier implements MultiCla
                 ! this.disableDriftDetectionOption.isSet(), 
                 driftDetectionMethodOption,
                 warningDetectionMethodOption,
-                false);
+                false,
+                ! this.disableRecurringDriftDetectionOption.isSet(),
+                false, // @suarezcetrulo : first model is not old.
+                null // @suarezcetrulo : Windows start at NULL (till the first earning is reached)
+                );
         }
     }
     
@@ -317,13 +371,31 @@ public class AdaptiveRandomForest extends AbstractClassifier implements MultiCla
         
         // Bkg learner
         protected ARFBaseLearner bkgLearner;
+        
         // Statistics
         public BasicClassificationPerformanceEvaluator evaluator;
         protected int numberOfDriftsDetected;
         protected int numberOfWarningsDetected;
+        
+		// ////////////////////////////////////////////////
+		// ADDED IN RCARF by @suarezcetrulo
+		// ////////////////////////////////////////////////
+        public boolean useRecurringLearner; // also added to constructor and methods
+        protected boolean recurringConceptDetected;
+        protected Window lastErrors;
+        protected ARFBaseLearner bestRecurringLearner;
+        protected Concept tmpModel;
+        protected ConcurrentHashMap<Integer, Concept> oldModels;
+        protected boolean isOldLearner;
+        protected ConceptHistoryLearners oldLearners;
+        protected long lastError;
+        protected long errorBeforeWarning;
+		// ////////////////////////////////////////////////
+		// ////////////////////////////////////////////////
 
         private void init(int indexOriginal, ARFHoeffdingTree instantiatedClassifier, BasicClassificationPerformanceEvaluator evaluatorInstantiated, 
-            long instancesSeen, boolean useBkgLearner, boolean useDriftDetector, ClassOption driftOption, ClassOption warningOption, boolean isBackgroundLearner) {
+            long instancesSeen, boolean useBkgLearner, boolean useDriftDetector, ClassOption driftOption, ClassOption warningOption, 
+            boolean isBackgroundLearner, boolean useRecurringLearner, boolean isOldLearner, Window lastErrors) { // last parameters added by @suarezcetrulo
             this.indexOriginal = indexOriginal;
             this.createdOn = instancesSeen;
             this.lastDriftOn = 0;
@@ -332,11 +404,25 @@ public class AdaptiveRandomForest extends AbstractClassifier implements MultiCla
             this.classifier = instantiatedClassifier;
             this.evaluator = evaluatorInstantiated;
             this.useBkgLearner = useBkgLearner;
+            this.useRecurringLearner = useRecurringLearner;
             this.useDriftDetector = useDriftDetector;
             
             this.numberOfDriftsDetected = 0;
             this.numberOfWarningsDetected = 0;
             this.isBackgroundLearner = isBackgroundLearner;
+
+	    		// ////////////////////////////////////////////////
+	    		// ADDED IN RCARF by @suarezcetrulo
+	    		// ////////////////////////////////////////////////
+            oldModels = ConceptHistory.historyList;
+            this.isOldLearner = isOldLearner;
+            this.recurringConceptDetected = false;
+            this.lastErrors = lastErrors;
+            this.lastError = 100; // we assume that the error before the first execution when a DT is new is 100% (worst case)
+            this.errorBeforeWarning = 100;
+            
+	    		// ////////////////////////////////////////////////
+	    		// ////////////////////////////////////////////////
 
             if(this.useDriftDetector) {
                 this.driftOption = driftOption;
@@ -350,20 +436,41 @@ public class AdaptiveRandomForest extends AbstractClassifier implements MultiCla
             }
         }
 
+        // last inputs parameters added by @suarezcetrulo
         public ARFBaseLearner(int indexOriginal, ARFHoeffdingTree instantiatedClassifier, BasicClassificationPerformanceEvaluator evaluatorInstantiated, 
-                    long instancesSeen, boolean useBkgLearner, boolean useDriftDetector, ClassOption driftOption, ClassOption warningOption, boolean isBackgroundLearner) {
-            init(indexOriginal, instantiatedClassifier, evaluatorInstantiated, instancesSeen, useBkgLearner, useDriftDetector, driftOption, warningOption, isBackgroundLearner);
+                    long instancesSeen, boolean useBkgLearner, boolean useDriftDetector, ClassOption driftOption, ClassOption warningOption, 
+                    boolean isBackgroundLearner, boolean useRecurringLearner, boolean isOldLearner, Window lastErrors) {
+            init(indexOriginal, instantiatedClassifier, evaluatorInstantiated, instancesSeen, useBkgLearner, 
+            		 useDriftDetector, driftOption, warningOption, isBackgroundLearner, useRecurringLearner,  isOldLearner, lastErrors);
         }
 
         public void reset() {
-            if(this.useBkgLearner && this.bkgLearner != null) {
+	    		// @suarezcetrulo
+	    		// ////////////////////////////////////////////////
+	    		// ADDED IN RCARF
+			// ////////////////////////////////////////////////
+			// 2 Move to the best BKG Learner (pick in Drift step 1)	
+        		if (this.recurringConceptDetected && this.bestRecurringLearner != null) {
+	            System.out.println("RECURRING DRIFT RESET IN MODEL #"+this.indexOriginal+" TO MODEL #"+this.bestRecurringLearner.indexOriginal); //added by @suarezcetrulo            		
+                this.classifier = this.bestRecurringLearner.classifier;
+                this.driftDetectionMethod = this.bestRecurringLearner.driftDetectionMethod;
+                this.warningDetectionMethod = this.bestRecurringLearner.warningDetectionMethod;
+                this.evaluator = this.bestRecurringLearner.evaluator;
+                this.createdOn = this.bestRecurringLearner.createdOn;
+                this.lastErrors = this.bestRecurringLearner.lastErrors;
+                this.bestRecurringLearner = null;
+                this.bkgLearner = null;
+                //this.isOldLearner = false; this shouldnt be necessary
+        		} // ////////////////////////////////////////////////
+        		else if(this.useBkgLearner && this.bkgLearner != null) {  
+    	            System.out.println("DRIFT RESET IN MODEL #"+this.indexOriginal+" TO NEW MODEL #"+this.bkgLearner.indexOriginal); //added by @suarezcetrulo         
                 this.classifier = this.bkgLearner.classifier;
-                
                 this.driftDetectionMethod = this.bkgLearner.driftDetectionMethod;
                 this.warningDetectionMethod = this.bkgLearner.warningDetectionMethod;
-                
                 this.evaluator = this.bkgLearner.evaluator;
                 this.createdOn = this.bkgLearner.createdOn;
+                this.lastErrors = this.bkgLearner.lastErrors; // added by @suarezcetrulo
+                this.bestRecurringLearner = null;
                 this.bkgLearner = null;
             }
             else {
@@ -377,7 +484,9 @@ public class AdaptiveRandomForest extends AbstractClassifier implements MultiCla
         public void trainOnInstance(Instance instance, double weight, long instancesSeen) {
             Instance weightedInstance = (Instance) instance.copy();
             weightedInstance.setWeight(instance.weight() * weight);
-            this.classifier.trainOnInstance(weightedInstance);
+            
+            if (!this.isOldLearner) //Don't train if this is an old model (from concept history)
+            		this.classifier.trainOnInstance(weightedInstance);
             
             if(this.bkgLearner != null)
                 this.bkgLearner.classifier.trainOnInstance(instance);
@@ -385,33 +494,57 @@ public class AdaptiveRandomForest extends AbstractClassifier implements MultiCla
             // Should it use a drift detector? Also, is it a backgroundLearner? If so, then do not "incept" another one. 
             if(this.useDriftDetector && !this.isBackgroundLearner) {
                 boolean correctlyClassifies = this.classifier.correctlyClassifies(instance);
+                
                 // Check for warning only if useBkgLearner is active
-                if(this.useBkgLearner) {
+                if(this.useBkgLearner) {                    
                     // Update the warning detection method
                     this.warningDetectionMethod.input(correctlyClassifies ? 0 : 1);
-                    // Check if there was a change
-                    if(this.warningDetectionMethod.getChange()) {
+                         
+                    // Check if there was a change (=WARNING CASE @suarezcetrulo)
+                    if(this.warningDetectionMethod.getChange()) {                			
                         this.lastWarningOn = instancesSeen;
+                        this.errorBeforeWarning = this.lastError; // added by @suarezcetrulo : TODO check that its alright
                         this.numberOfWarningsDetected++;
+                        
                         // Create a new bkgTree classifier
                         ARFHoeffdingTree bkgClassifier = (ARFHoeffdingTree) this.classifier.copy();
                         bkgClassifier.resetLearning();
-                        
+                                                
                         // Resets the evaluator
                         BasicClassificationPerformanceEvaluator bkgEvaluator = (BasicClassificationPerformanceEvaluator) this.evaluator.copy();
                         bkgEvaluator.reset();
                         
                         // Create a new bkgLearner object
                         this.bkgLearner = new ARFBaseLearner(indexOriginal, bkgClassifier, bkgEvaluator, instancesSeen, 
-                            this.useBkgLearner, this.useDriftDetector, this.driftOption, this.warningOption, true);
+                            this.useBkgLearner, this.useDriftDetector, this.driftOption, this.warningOption, true, this.useRecurringLearner, false, null); // added last inputs parameter by @suarezcetrulo
+
+	                		// ////////////////////////////////////////////////
+	                		// ADDED IN RCARF by @suarezcetrulo
+	            			// ////////////////////////////////////////////////
+	                    if(this.useRecurringLearner) {
+		        				System.out.println("WARNING ACTIVE IN MODEL #"+this.indexOriginal+"with background model running #"+bkgLearner.indexOriginal); //@suarezcetrulo
+		        				// 0 Temporally clone the current classifier in a concept object (it still will be in use until the Drift is confirmed). 
+		        				tmpModel.reset();
+		        				tmpModel = new Concept(indexOriginal, (ARFHoeffdingTree) this.classifier.copy(), this.createdOn, 
+		        								(long) this.evaluator.getPerformanceMeasurements()[0].getValue(), instancesSeen, this.lastErrors);
+		        				// 1 Start of warning window
+		        				startWindowEvaluation(); 	
+	                    }	// ////////////////////////////////////////////////
                         
                         // Update the warning detection object for the current object 
                         // (this effectively resets changes made to the object while it was still a bkg learner). 
                         this.warningDetectionMethod = ((ChangeDetector) getPreparedClassOption(this.warningOption)).copy();
-                        
-                    }
+                    } else {
+                    		this.lastError = (long) this.evaluator.getPerformanceMeasurements()[1].getValue(); // @suarezcetrulo: TODO convert to error. it's still accuracy percent
+                    } // TODO. Need to understand what happens with false Alarms
                 }
                 
+	        		// ////////////////////////////////////////////////
+	        		// ADDED IN RCARF by @suarezcetrulo
+	    			// ////////////////////////////////////////////////   
+                // 2 Runs the function updateWindows for both historyLearners, bkg and 'this' one.
+                if(this.useRecurringLearner && this.oldLearners != null) updateSlidingWindows();
+             	// ////////////////////////////////////////////////
                 /*********** drift detection ***********/
                 
                 // Update the DRIFT detection method
@@ -420,10 +553,108 @@ public class AdaptiveRandomForest extends AbstractClassifier implements MultiCla
                 if(this.driftDetectionMethod.getChange()) {
                     this.lastDriftOn = instancesSeen;
                     this.numberOfDriftsDetected++;
+	            		// ////////////////////////////////////////////////
+	            		// ADDED IN RCARF by @suarezcetrulo
+	        			// ////////////////////////////////////////////////
+	        			System.out.println("DRIFT IN MODEL #"+this.indexOriginal);  //@suarezcetrulo
+	        			// 1 Compare DT results using Window method and pick the best one
+	        			// rank of concepthistory windows + bkg model. have a list
+	        			/* TODO 
+	        			 *runningComparisons();	                    
+	        			  if(recurringWindowResults better than bkgLearner // pass check)
+		        			this.recurringConceptDetected = true;
+		        			best=classifier with best performance in the running concept history that still exists in the concurrent one;
+		        			this.bestRecurringLearner=best;
+		        		*/	    			
+	        			// ////////////////////////////////////////////////
+	        			// ////////////////////////////////////////////////
                     this.reset();
                 }
+                // TODO. If its false alarm, we should set oldLearners and bgkLearners as NULL
+
             }
         }
+
+		// ////////////////////////////////////////////////
+		// ADDED IN RCARF by  @suarezcetrulo
+		// ////////////////////////////////////////////////
+        public void startWindowEvaluation() {
+        		this.oldLearners = new ConceptHistoryLearners();
+        		this.oldLearners.resetHistory();
+        		
+        		// Dynamic windows for old models
+        		for (Concept auxConcept : ConceptHistory.getConceptHistorySnapshot().values()) {
+            		if(ConceptHistory.rememberWindowFlag) auxConcept.getLastErrors().clear(); // clears content but keeps window size
+            		else auxConcept.getLastErrors().reset(); // restart content and size of the window
+            			        			
+            		// Creates a Background Learner for each historic concept
+            		oldLearners.pushConceptLearner(new ConceptLearner(auxConcept.getIndex(), 
+        					auxConcept.getModel(), (BasicClassificationPerformanceEvaluator) this.evaluator.copy(), 
+        					auxConcept.getNumberOfInstancesProcessedByCreation(), auxConcept.getNumberOfInstancesClassified(), 
+        					auxConcept.getNumberOfInstancesSeen(), auxConcept.getLastErrors(), 
+        					this.useDriftDetector, this.driftOption, this.warningOption, this.useRecurringLearner, true)); // last param true as this refers to old models
+        		}
+        		// Dynamic Window for main model (on test and training)
+    			this.lastErrors.clear();        			
+        		this.lastErrors = new Window(((ConceptHistory.rememberWindowFlag && this.lastErrors != null) ? lastErrors.windowSize: ConceptHistory.defaultWindow), 
+        									  ConceptHistory.windowIncrements, ConceptHistory.minWindowSize, ConceptHistory.decisionThreshold);
+
+        		// Dynamic Window for Background model
+            this.bkgLearner.lastErrors.clear();  
+            this.bkgLearner.lastErrors = new Window(((ConceptHistory.rememberWindowFlag && this.lastErrors != null) ? lastErrors.windowSize: ConceptHistory.defaultWindow), 
+					  ConceptHistory.windowIncrements, ConceptHistory.minWindowSize, ConceptHistory.decisionThreshold);
+        }
+        
+        // Inserts and re-sizes
+        /** comment by @suarezcetrulo
+        // TREE_ID: this.indexOriginal
+        // PROCESSED_INSTANCES_BEFORE_CREATING_THIS_TREE: this.createdOn
+        // Classified instances: this.evaluator.getPerformanceMeasurements()[0]
+        // Classifications correct (percent): this.evaluator.getPerformanceMeasurements()[1].
+        // Kappa Statistic (percent): this.evaluator.getPerformanceMeasurements()[2].
+        // Kappa Temporal Statistic (percent): this.evaluator.getPerformanceMeasurements()[3]
+        // Kappa M Statistic (percent): this.evaluator.getPerformanceMeasurements()[4]
+        System.out.println("MODEL #"+this.indexOriginal+" with background model running #"+bkgLearner.indexOriginal);**/
+        public void updateSlidingWindows() {
+        		// Add error
+        		this.lastErrors.add((long) this.evaluator.getPerformanceMeasurements()[1].getValue());
+        		((ConceptHistory.threshold==-1) ? this.lastErrors.windowResize(-1.0) : this.lastErrors.windowResize(this.priorError));
+    			// TODO: this.Window.resize(this.priorError [-1 if threshold==-1]) // priorError=min or avg error before warning
+       
+
+        		
+    			// TODO: this.Window.add(this.classifierMeasurement.result)
+			// TODO: this.Window.resize(this.priorError [-1 if threshold==-1]) // priorError=min or avg error before warning
+        	
+        		// TODO:
+        		//for (iterate recurrenceEvaluation)
+        		//	auxWindow.add(classifierMeasurement.result)
+        		//  auxWindow.resize(this.priorError [-1 if threshold==-1])
+        		
+        		// TODO: bkgLearnerWindow.add(BKGclassifierMeasurement.result)
+    			// TODO: bkgLearnerWindow.resize(this.priorError [-1 if threshold==-1])
+
+        }
+        
+        public void runningComparisons() {
+        		/*HashMap<Integer,Window> recurrenceEvaluation= new HashMap<Integer,Window>();
+        		
+        		for (Concept auxConcept : oldModels.values()) {
+        			recurrenceEvaluation.put(auxConcept.getIndex(), new Window());
+        		}*/
+        		
+        		// TODO:PICK BEST BETWEEN ALL RECURRING AND WINDOW
+
+        }
+        
+        public void replaceConcepts() {
+        		// TODO
+        		// Replaces a tmpConcept saved at the start of the warning window in the static ConceptHistory when a drift occurs.
+        		
+        		// TODO: We also need to reset clear and remove the Learners once we have decided
+        }
+        
+        // ////////////////////////////////////////////////
 
         public double[] getVotesForInstance(Instance instance) {
             DoubleVector vote = new DoubleVector(this.classifier.getVotesForInstance(instance));
@@ -459,4 +690,299 @@ public class AdaptiveRandomForest extends AbstractClassifier implements MultiCla
             return 0;
         }
     }
+    
+    // cetrulin 29-nov-2017
+    protected class Window {
+        int windowSize;
+        int minimumSize; 
+        int defaultSize;
+        int incrementsSize;
+        double threshold;
+        ArrayList<Double> lastErrors;
+        
+        // Constructor for window: threshold = -1 means that selected size update policy is 1
+        public Window(int initialSize,int increments, int minSize, double threshold){
+	    		this.windowSize=initialSize;
+	    		this.defaultSize=initialSize;
+	    		this.incrementsSize=increments;
+	        	this.minimumSize=minSize;
+	    		this.threshold=threshold;
+	    		this.lastErrors=new ArrayList<Double>();
+	    }
+
+        // It adds errors (1-accuracy) per classified row
+        public void add(double iterarionError) {
+        		// Always storing extra results just in case we increment the window size
+        		if(lastErrors.size()<(this.windowSize+this.incrementsSize)) {
+        			this.lastErrors.add(iterarionError);
+        		} else {
+        			// Remove oldest
+        			this.lastErrors.remove(0);
+        		}
+        }
+        
+        public void reset() {
+        		this.lastErrors.clear();
+        		this.windowSize=defaultSize;
+        }
+        
+        public void clear() {
+	    		this.lastErrors.clear();
+        }
+        
+        // Returns the latest error window creating a sublist of the last errors.
+        // As we store the plus last INCREMENT_SIZE errors, we need to start from the position INCREMENT_SIZE-1 (zero indexed)
+        // Size of the sublist is WINDOW_SIZE 
+        public ArrayList<Double> getLastWindow (){
+        		return (ArrayList<Double>) this.lastErrors.subList((this.lastErrors.size()-(this.incrementsSize-1)), this.windowSize);
+        }
+        
+        public ArrayList<Double> getSmallerWindow (){
+    			return (ArrayList<Double>) this.lastErrors.subList((this.lastErrors.size()-(this.incrementsSize-1)+this.minimumSize), this.windowSize-this.minimumSize);
+        }
+        
+        public ArrayList<Double> getLargeWindow (){
+    			return this.lastErrors;
+        }
+    
+        public void windowResize(double priorError) {
+        		// size update policy 2
+        		if(priorError==-1) { // [ min(error(c,w_c)) - priorError ] > threshold -> window size increases
+				if(Collections.min(getLastWindow()) - priorError > this.threshold)
+					this.windowSize+=this.incrementsSize;
+				else // otherwise it decreases
+					this.windowSize-=this.incrementsSize;
+					if(this.windowSize<this.minimumSize) 
+						this.windowSize=this.minimumSize;
+        		} // size update policy 1
+        		else { //For each c, W_c=s  , where s is an small number / For each iteration, independently of ny situations / a = active model
+            		double W_a_candidate_0=Collections.min(getLastWindow());
+            		double W_a_candidate_1=Collections.min(getLargeWindow ());
+            		double W_a_candidate_2=Collections.min(getSmallerWindow ());
+            		if ( W_a_candidate_1 > W_a_candidate_0 && W_a_candidate_1 > W_a_candidate_2 ) // Increase window size
+        				this.windowSize+=this.incrementsSize;
+            		else if ( W_a_candidate_2 > W_a_candidate_0 && W_a_candidate_2 > W_a_candidate_1 ) // Decrease window size
+        				this.windowSize-=this.incrementsSize;
+        				if(this.windowSize<this.minimumSize) 
+        					this.windowSize=this.minimumSize;
+            		//else System.out.println("Window size remains the same");
+        		}        		
+        }
+    }
+    
+    //Concept_history = (list of concept_representations)
+    // Static and concurrent for all DTs that run in parallel
+    public static class ConceptHistory {
+
+    		// Concurrent Concept History List
+    		public static ConcurrentHashMap<Integer,Concept> historyList = new ConcurrentHashMap<Integer,Concept> ();
+    		
+    		// Dynamic Sliding window properties
+    		public static boolean rememberWindowFlag;
+    		public static int defaultWindow;
+    		public static int windowIncrements;
+    		public static int minWindowSize;
+    		public static double decisionThreshold;
+
+
+    	
+        /** Static class - constructor not required
+    		// Constructor
+        public ConceptHistory(){
+        		historyList=new ConcurrentHashMap<Integer,Concept> ();
+        		System.out.println("Concept History created");
+        }**/
+    		
+    		public ConceptHistory(){
+        		historyList=new ConcurrentHashMap<Integer,Concept> ();
+        		System.out.println("Concept History created");
+        }
+        
+		public void resetHistory(){
+	    		historyList.clear();
+	    		historyList=new ConcurrentHashMap<Integer,Concept> ();
+	    		System.out.println("Concept History reset");
+        }
+    
+        // It adds old model to Concept History
+        public void pushConcept(int index, ARFHoeffdingTree classifier, long createdOn, long classifiedInstances, long instancesSeen, Window lastErrors) {        		
+        		historyList.put(index,new Concept(index, classifier, createdOn, classifiedInstances, instancesSeen, lastErrors));
+        }
+                
+        public Concept removeConcept(int modelID){
+    			return historyList.remove(modelID);
+        }
+                 
+	        
+        // Getters
+        
+        public static HashMap<Integer,Concept> getConceptHistorySnapshot() {
+			return new HashMap<Integer,Concept>(historyList);
+        }
+        
+        public Concept pullConcept(int modelID){
+    			return historyList.get(modelID);
+        }
+        
+        public int getHistorySize() {
+        		return historyList.size();
+        }
+        
+        // Setters (for flags)
+        public static void setRememberWindowFlag(boolean parameter) {
+	    		rememberWindowFlag=parameter;
+		}
+        
+        public static void setDefaultWindowValue(int value) {
+	    		defaultWindow=value;
+		}
+        
+        public static void setWindowIncrementsValue(int value) {
+        		windowIncrements=value;
+		}
+        
+        public static void setMinWindowSizeValue(int value) {
+        		minWindowSize=value;
+		}
+        
+        public static void setThresholdValue(double value) {
+    			decisionThreshold=value;
+        }
+        
+        
+        /** The next parameters can be also obtained from the old concept itself
+        public ARFBaseLearner getModel(int modelID) {
+			return historyList.get(modelID).getModel();
+        }
+        
+        public Window getLastErrors(int modelID){
+        		return historyList.get(modelID).getLastErrors();
+        }
+        
+        public int getLastExampleID(int modelID){
+    			return historyList.get(modelID).getLastExampleID();
+        }**/
+    }
+    
+    public class ConceptHistoryLearners {
+		protected HashMap<Integer,ConceptLearner> historyList;
+		
+		// Constructor
+	    public ConceptHistoryLearners(HashMap<Integer,ConceptLearner> historyList){
+	    		this.historyList=historyList;
+	    		System.out.println("Image of Concept History created");
+	    }
+	    
+        public ConceptHistoryLearners() {
+        		this.historyList = new HashMap<Integer,ConceptLearner> ();
+		}
+
+        public void pushConceptLearner(ConceptLearner obj) {        		
+    			historyList.put(obj.getIndex(),obj);
+        }
+        
+		public Collection<ConceptLearner> getConceptHistoryValues() {
+			return this.historyList.values();
+        }
+		
+        public void resetHistory(){
+	    		historyList.clear();
+	    		historyList=new HashMap<Integer,ConceptLearner> ();
+	    		System.out.println("Concept History reset");
+        }
+	    	    
+	}
+    
+    //Concept_representation = (model, last_weight, last_used_timestamp, conceptual_vector)
+    public class ConceptLearner extends Concept {
+
+    		// Concept attributes
+    		protected int index;
+    		protected ARFHoeffdingTree classifier;
+    		protected long createdOn;
+    		protected long classifiedInstances;
+    		protected long instancesSeen;
+    		ARFBaseLearner conceptLearner;
+    		
+	    // Constructor
+	    public ConceptLearner(int index, ARFHoeffdingTree classifier, BasicClassificationPerformanceEvaluator evaluator, 
+	    						long createdOn, long classifiedInstances, long instancesSeen, Window lastErrors, 
+	    						boolean useDriftDetector, ClassOption driftOption, ClassOption warningOption, 
+	    						boolean useRecurringLearner, boolean isOldModel){
+	    	
+	    		this.index=index;
+	    		this.classifier=classifier;
+	    		this.createdOn=createdOn;
+	    		this.instancesSeen=instancesSeen;
+	    		this.classifiedInstances=classifiedInstances;
+            BasicClassificationPerformanceEvaluator conceptEvaluator = (BasicClassificationPerformanceEvaluator) evaluator;
+            conceptEvaluator.reset();                
+	    		this.conceptLearner = new ARFBaseLearner(index, classifier, conceptEvaluator, instancesSeen, 
+	                    false, useDriftDetector, driftOption, warningOption, true, useRecurringLearner, isOldModel, lastErrors);
+	    }
+	    
+	    
+        
+	    	   
+	}
+    
+    public static class Concept {
+
+		// Concept attributes
+		protected int index;
+		protected ARFHoeffdingTree classifier;
+		protected long createdOn;
+		protected long classifiedInstances;
+		protected long instancesSeen;
+		protected Window lastErrors;
+	
+		public Concept(){
+			// Default concept constructor
+	    }
+			
+	    // Constructor
+	    public Concept(int index, ARFHoeffdingTree classifier,long createdOn, long classifiedInstances, long instancesSeen, Window lastErrors){
+	    		this.index=index;
+	    		this.classifier=classifier;
+	    		this.createdOn=createdOn;
+	    		this.lastErrors=lastErrors;
+	    		this.instancesSeen=instancesSeen;
+	    		this.classifiedInstances=classifiedInstances;
+	    }
+	    
+	    public void reset() {
+	    		classifier.resetLearning();
+	    		classifier = null;
+	    		lastErrors.reset();
+	    		lastErrors = null;
+	    		classifiedInstances = instancesSeen = createdOn = -1;
+		}
+	    
+	    // Getters
+	
+		public ARFHoeffdingTree getModel() {
+	    		return classifier;
+	    }
+	    
+	    public int getIndex() {
+			return index;	    	
+	    }
+		
+	    public long getNumberOfInstancesProcessedByCreation() {
+			return createdOn;	    	
+	    }
+		
+	    public long getNumberOfInstancesSeen() {
+			return instancesSeen;	    	
+	    }
+	    
+	    public long getNumberOfInstancesClassified() {
+			return classifiedInstances;	    	
+	    }
+	    
+	    public Window getLastErrors() {
+			return lastErrors;
+	    }
+	}
+    
 }
