@@ -558,14 +558,8 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 	        			// ////////////////////////////////////////////////
 	        			System.out.println("DRIFT IN MODEL #"+this.indexOriginal);  //@suarezcetrulo
 	        			// 1 Compare DT results using Window method and pick the best one
-	        			// rank of concepthistory windows + bkg model. have a list
-	        			/* TODO 
-	        			 *runningComparisons();	                    
-	        			  if(recurringWindowResults better than bkgLearner // pass check)
-		        			this.recurringConceptDetected = true;
-		        			best=classifier with best performance in the running concept history that still exists in the concurrent one;
-		        			this.bestRecurringLearner=best;
-		        		*/	    			
+	        			// TODO 
+	        			 runningComparisons();			
 	        			// ////////////////////////////////////////////////
 	        			// ////////////////////////////////////////////////
                     this.reset();
@@ -616,26 +610,23 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
         // Kappa M Statistic (percent): this.evaluator.getPerformanceMeasurements()[4]
         System.out.println("MODEL #"+this.indexOriginal+" with background model running #"+bkgLearner.indexOriginal);**/
         public void updateSlidingWindows() {
-        		// Add error
-        		this.lastErrors.add((long) this.evaluator.getPerformanceMeasurements()[1].getValue());
-        		((ConceptHistory.threshold==-1) ? this.lastErrors.windowResize(-1.0) : this.lastErrors.windowResize(this.priorError));
-    			// TODO: this.Window.resize(this.priorError [-1 if threshold==-1]) // priorError=min or avg error before warning
-       
-
+        		// Add error to main classifier window
+        		this.lastErrors.add((long) this.evaluator.getPerformanceMeasurements()[1].getValue()); // TODO. convert in error. still accuracy percent
+    			// this.Window.resize(this.priorError [-1 if threshold==-1]) // priorError before warning
+        		this.lastErrors.windowResize((((ConceptHistory.decisionThreshold==-1) ? -1.0 : this.errorBeforeWarning)));
         		
-    			// TODO: this.Window.add(this.classifierMeasurement.result)
-			// TODO: this.Window.resize(this.priorError [-1 if threshold==-1]) // priorError=min or avg error before warning
-        	
-        		// TODO:
-        		//for (iterate recurrenceEvaluation)
-        		//	auxWindow.add(classifierMeasurement.result)
-        		//  auxWindow.resize(this.priorError [-1 if threshold==-1])
+        		// Add error to main classifier window
+        		this.bkgLearner.lastErrors.add((long) this.bkgLearner.evaluator.getPerformanceMeasurements()[1].getValue()); // TODO. convert in error. still accuracy percent
+        		this.bkgLearner.lastErrors.windowResize((((ConceptHistory.decisionThreshold==-1) ? -1.0 : this.errorBeforeWarning))); // we add error of main classifier in all the classifiers (bkg or old)
         		
-        		// TODO: bkgLearnerWindow.add(BKGclassifierMeasurement.result)
-    			// TODO: bkgLearnerWindow.resize(this.priorError [-1 if threshold==-1])
-
+        		// Dynamic windows for old models
+        		for (ConceptLearner auxConcept : oldLearners.getConceptHistoryValues()) {
+        			auxConcept.conceptLearner.lastErrors.add((long) auxConcept.conceptLearner.evaluator.getPerformanceMeasurements()[1].getValue()); // TODO. convert in error. still accuracy percent
+        			auxConcept.conceptLearner.lastErrors.windowResize((((ConceptHistory.decisionThreshold==-1) ? -1.0 : this.errorBeforeWarning)));
+        		}
         }
         
+        // Rank of concept history windows + bkg model
         public void runningComparisons() {
         		/*HashMap<Integer,Window> recurrenceEvaluation= new HashMap<Integer,Window>();
         		
@@ -644,12 +635,16 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
         		}*/
         		
         		// TODO:PICK BEST BETWEEN ALL RECURRING AND WINDOW
-
+			 /* if(recurringWindowResults better than bkgLearner // pass check)
+   			this.recurringConceptDetected = true;
+   			best=classifier with best performance in the running concept history that still exists in the concurrent one;
+   			this.bestRecurringLearner=best;
+   		*/	 
         }
         
+        // Replaces a tmpConcept saved at the start of the warning window in the static ConceptHistory when a drift occurs.
         public void replaceConcepts() {
-        		// TODO
-        		// Replaces a tmpConcept saved at the start of the warning window in the static ConceptHistory when a drift occurs.
+        		// TODO: 
         		
         		// TODO: We also need to reset clear and remove the Learners once we have decided
         }
