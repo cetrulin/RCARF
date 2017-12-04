@@ -154,6 +154,12 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
     public FloatOption thresholdOption = new FloatOption("thresholdOption", 't', 
             "Decision threshold for recurring concepts (-1 = threshold option disabled).", 0.65, -1, Float.MAX_VALUE);
     
+    public IntOption resizeAllWindowsOption = new IntOption("resizeAllWindows", 'b', 
+    		"Should the comparison windows for background and old learners be also dynamic? "
+    		+ "(0 = only the active model has a dynamic window, 1 = active and background models have dynamic windows, 2 = all models, "
+    		+ "including historic concepts). Window size changes in historic concepts during evaluation will only be saved "
+    		+ "if the historic model is selected as new active model and the threshold option is not disabled.", 1, 0, 2);
+
 	// ////////////////////////////////////////////////
 	// ////////////////////////////////////////////////
     protected static final int FEATURES_M = 0;
@@ -270,6 +276,7 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
     		 ConceptHistory.setWindowIncrementsValue(this.windowIncrementsOption.getValue());    	
     		 ConceptHistory.setMinWindowSizeValue(this.minWindowSizeOption.getValue());  
     		 ConceptHistory.setThresholdValue(this.thresholdOption.getValue());
+    		 ConceptHistory.setBackgroundDynamicWindowsFlag(this.resizeAllWindowsOption.getValue());
     }
 	// ////////////////////////////////////////////////
 	// ////////////////////////////////////////////////
@@ -449,9 +456,15 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 	    		// ////////////////////////////////////////////////
 	    		// ADDED IN RCARF
 			// ////////////////////////////////////////////////
+			System.out.println("RESET IN MODEL #"+this.indexOriginal);
+			// 1 Compare DT results using Window method and pick the best one
+			if(this.useRecurringLearner && this.oldLearners != null)  compareModels();
+        	
 			// 2 Move to the best BKG Learner (pick in Drift step 1)	
         		if (this.recurringConceptDetected && this.bestRecurringLearner != null) {
-	            System.out.println("RECURRING DRIFT RESET IN MODEL #"+this.indexOriginal+" TO MODEL #"+this.bestRecurringLearner.indexOriginal); //added by @suarezcetrulo            		
+	            System.out.println("RECURRING DRIFT RESET IN MODEL #"+this.indexOriginal+" TO MODEL #"+this.bestRecurringLearner.indexOriginal); //added by @suarezcetrulo       
+		        // Replaces a tmpConcept saved at the start of the warning window in the static ConceptHistory when a drift occurs.
+	            // TODO  ADD COPY ACTIVE MODEL TO CONCEPT HISTORY
                 this.classifier = this.bestRecurringLearner.classifier;
                 this.driftDetectionMethod = this.bestRecurringLearner.driftDetectionMethod;
                 this.warningDetectionMethod = this.bestRecurringLearner.warningDetectionMethod;
@@ -463,7 +476,9 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
                 //this.isOldLearner = false; this shouldnt be necessary
         		} // ////////////////////////////////////////////////
         		else if(this.useBkgLearner && this.bkgLearner != null) {  
-    	            System.out.println("DRIFT RESET IN MODEL #"+this.indexOriginal+" TO NEW MODEL #"+this.bkgLearner.indexOriginal); //added by @suarezcetrulo         
+    	            System.out.println("DRIFT RESET IN MODEL #"+this.indexOriginal+" TO NEW MODEL #"+this.bkgLearner.indexOriginal); //added by @suarezcetrulo
+    		        // Replaces a tmpConcept saved at the start of the warning window in the static ConceptHistory when a drift occurs.  //added by @suarezcetrulo
+    	            // TODO  ADD COPY ACTIVE MODEL TO CONCEPT HISTORY  //added by @suarezcetrulo
                 this.classifier = this.bkgLearner.classifier;
                 this.driftDetectionMethod = this.bkgLearner.driftDetectionMethod;
                 this.warningDetectionMethod = this.bkgLearner.warningDetectionMethod;
@@ -479,6 +494,8 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
                 this.driftDetectionMethod = ((ChangeDetector) getPreparedClassOption(this.driftOption)).copy();
             }
             this.evaluator.reset();
+    			// TODO: We also need to reset, clear and remove the BKG AND OLD Learners here
+
         }
 
         public void trainOnInstance(Instance instance, double weight, long instancesSeen) {
@@ -553,15 +570,6 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
                 if(this.driftDetectionMethod.getChange()) {
                     this.lastDriftOn = instancesSeen;
                     this.numberOfDriftsDetected++;
-	            		// ////////////////////////////////////////////////
-	            		// ADDED IN RCARF by @suarezcetrulo
-	        			// ////////////////////////////////////////////////
-	        			System.out.println("DRIFT IN MODEL #"+this.indexOriginal);  //@suarezcetrulo
-	        			// 1 Compare DT results using Window method and pick the best one
-	        			// TODO 
-	        			 runningComparisons();			
-	        			// ////////////////////////////////////////////////
-	        			// ////////////////////////////////////////////////
                     this.reset();
                 }
                 // TODO. If its false alarm, we should set oldLearners and bgkLearners as NULL
@@ -610,47 +618,62 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
         // Kappa M Statistic (percent): this.evaluator.getPerformanceMeasurements()[4]
         System.out.println("MODEL #"+this.indexOriginal+" with background model running #"+bkgLearner.indexOriginal);**/
         public void updateSlidingWindows() {
+        		// TODO. Do we need to add the active model? A window for this may not be necessary, as we already know and in the case of drift we will transition to a different one.
+        		//		 There is no way that this classifier give us best results than the others in case of drift. And if so, is that a false alarm? 
+        		// 		 That would be an addition to the algorithm that hasnt been agreed yet.
         		// Add error to main classifier window
         		this.lastErrors.add((long) this.evaluator.getPerformanceMeasurements()[1].getValue()); // TODO. convert in error. still accuracy percent
     			// this.Window.resize(this.priorError [-1 if threshold==-1]) // priorError before warning
-        		this.lastErrors.windowResize((((ConceptHistory.decisionThreshold==-1) ? -1.0 : this.errorBeforeWarning)));
+        		this.lastErrors.windowResize((((ConceptHistory.decisionThreshold==-1) ? -1.0 : this.errorBeforeWarning)));        		
+        		// TODO. potential removal of these two lines above
         		
         		// Add error to main classifier window
         		this.bkgLearner.lastErrors.add((long) this.bkgLearner.evaluator.getPerformanceMeasurements()[1].getValue()); // TODO. convert in error. still accuracy percent
-        		this.bkgLearner.lastErrors.windowResize((((ConceptHistory.decisionThreshold==-1) ? -1.0 : this.errorBeforeWarning))); // we add error of main classifier in all the classifiers (bkg or old)
+        		if(ConceptHistory.backgroundDynamicWindowsFlag>=1) this.bkgLearner.lastErrors.windowResize((((ConceptHistory.decisionThreshold==-1) ? -1.0 : this.errorBeforeWarning))); // we add error of main classifier in all the classifiers (bkg or old)
         		
         		// Dynamic windows for old models
         		for (ConceptLearner auxConcept : oldLearners.getConceptHistoryValues()) {
         			auxConcept.conceptLearner.lastErrors.add((long) auxConcept.conceptLearner.evaluator.getPerformanceMeasurements()[1].getValue()); // TODO. convert in error. still accuracy percent
-        			auxConcept.conceptLearner.lastErrors.windowResize((((ConceptHistory.decisionThreshold==-1) ? -1.0 : this.errorBeforeWarning)));
+        			if (ConceptHistory.backgroundDynamicWindowsFlag==2) auxConcept.conceptLearner.lastErrors.windowResize((((ConceptHistory.decisionThreshold==-1) ? -1.0 : this.errorBeforeWarning)));
         		}
         }
         
-        // Rank of concept history windows + bkg model
-        public void runningComparisons() {
-        		/*HashMap<Integer,Window> recurrenceEvaluation= new HashMap<Integer,Window>();
-        		
-        		for (Concept auxConcept : oldModels.values()) {
-        			recurrenceEvaluation.put(auxConcept.getIndex(), new Window());
-        		}*/
-        		
-        		// TODO:PICK BEST BETWEEN ALL RECURRING AND WINDOW
-			 /* if(recurringWindowResults better than bkgLearner // pass check)
-   			this.recurringConceptDetected = true;
-   			best=classifier with best performance in the running concept history that still exists in the concurrent one;
-   			this.bestRecurringLearner=best;
-   		*/	 
-        }
-        
-        // Replaces a tmpConcept saved at the start of the warning window in the static ConceptHistory when a drift occurs.
-        public void replaceConcepts() {
-        		// TODO: 
-        		
-        		// TODO: We also need to reset clear and remove the Learners once we have decided
-        }
-        
-        // ////////////////////////////////////////////////
+        // Rank of concept history windows and make decision against bkg model
+        public void compareModels() {
+        		HashMap<Integer, Double> ranking = new HashMap<Integer, Double>();
+        	
+        		// 0 - Add active model
+        		// ranking.put(this.indexOriginal, this.lastErrors.getLastWindowAverage()); // IT DOES NOT MAKE SENSE TO ADD THIS ONE AS IF THERE IS A DRIFT WE NEED TO CHANGE IT.
+        		// 1 - Add background model
+        		// ranking.put(bkgLearner.indexOriginal, bkgLearner.lastErrors.getLastWindowAverage());
+        		// 2 - Add old models
+	    		for (ConceptLearner auxConcept : oldLearners.getConceptHistoryValues()) {
+	    			// Check that the concept still is in the concept history and ready to be selected. If so, it adds its result to the ranking
+	    			if(oldModels.containsKey(auxConcept.getIndex())) ranking.put(auxConcept.getIndex(), auxConcept.conceptLearner.lastErrors.getLastWindowAverage());
+	    		}
+	    		// Compare this against the background model 
+	    		// TODO. any threshold here?
+	    		if(Collections.min(ranking.values())>=bkgLearner.lastErrors.getLastWindowAverage()){
+	        		this.recurringConceptDetected=true;
+	        		this.bestRecurringLearner=oldLearners.getConceptLearner(getMinKey(ranking));
+	    		} else this.recurringConceptDetected=false;
 
+        }
+        
+        // Aux method for getting the best classifier in a hashMap of (int modelIndex, double averageErrorInWindow) 
+        private Integer getMinKey(Map<Integer, Double> map, Integer... keys) {
+        	    Integer minKey = null;
+            double minValue = Double.MAX_VALUE;
+            for(Integer key : keys) {
+                double value = map.get(key);
+                if(value < minValue) {
+                    minValue = value;
+                    minKey = key;
+                }
+            } return minKey;
+        }
+        // ////////////////////////////////////////////////
+ 
         public double[] getVotesForInstance(Instance instance) {
             DoubleVector vote = new DoubleVector(this.classifier.getVotesForInstance(instance));
             return vote.getArrayRef();
@@ -739,10 +762,35 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
         public ArrayList<Double> getLargeWindow (){
     			return this.lastErrors;
         }
+        
+        // TODO: decide is best is best (lower) average or best (lower) minimum error
+        public double getLastWindowAverage() {
+        		return getAverageOfErrors(getLastWindow ()); 
+        }
+        
+        public double getLastWindowMinimum() {
+    			return getMinimumOfErrors(getLastWindow ()); 
+        }
+                
+        public double getAverageOfErrors(ArrayList<Double> errors) {
+        	  Double sum = 0.0;
+        	  if(!errors.isEmpty()) {
+        	    for (Double error : errors) {
+        	        sum += error;
+        	    }
+        	    return sum.doubleValue() / errors.size();
+        	  }
+        	  return sum;
+        	}
+        
+        public double getMinimumOfErrors(ArrayList<Double> errors) {
+        	  return Collections.min(errors);
+        	}
     
         public void windowResize(double priorError) {
         		// size update policy 2
         		if(priorError==-1) { // [ min(error(c,w_c)) - priorError ] > threshold -> window size increases
+        			// OR if(getAverageOfErrors(getLastWindow()) - priorError > this.threshold) TODO to decide
 				if(Collections.min(getLastWindow()) - priorError > this.threshold)
 					this.windowSize+=this.incrementsSize;
 				else // otherwise it decreases
@@ -751,9 +799,13 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 						this.windowSize=this.minimumSize;
         		} // size update policy 1
         		else { //For each c, W_c=s  , where s is an small number / For each iteration, independently of ny situations / a = active model
-            		double W_a_candidate_0=Collections.min(getLastWindow());
+            		double W_a_candidate_0=Collections.min(getLastWindow()); // or  W_a_candidate_0=getAverageOfErrors(getLastWindow())
             		double W_a_candidate_1=Collections.min(getLargeWindow ());
             		double W_a_candidate_2=Collections.min(getSmallerWindow ());
+            		/* OR THIS? TODO TO DECIDE
+            		double W_a_candidate_0=getAverageOfErrors(getLastWindow());
+            		double W_a_candidate_1=getAverageOfErrors(getLargeWindow ());
+            		double W_a_candidate_2=getAverageOfErrors(getSmallerWindow ()); */          		
             		if ( W_a_candidate_1 > W_a_candidate_0 && W_a_candidate_1 > W_a_candidate_2 ) // Increase window size
         				this.windowSize+=this.incrementsSize;
             		else if ( W_a_candidate_2 > W_a_candidate_0 && W_a_candidate_2 > W_a_candidate_1 ) // Decrease window size
@@ -778,7 +830,7 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
     		public static int windowIncrements;
     		public static int minWindowSize;
     		public static double decisionThreshold;
-
+    		public static int backgroundDynamicWindowsFlag;
 
     	
         /** Static class - constructor not required
@@ -844,6 +896,9 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
     			decisionThreshold=value;
         }
         
+        public static void setBackgroundDynamicWindowsFlag(int value) {
+        		backgroundDynamicWindowsFlag=value;
+        }
         
         /** The next parameters can be also obtained from the old concept itself
         public ARFBaseLearner getModel(int modelID) {
@@ -880,16 +935,25 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 			return this.historyList.values();
         }
 		
+		public ConceptLearner getConcept(int key) {
+			return historyList.get(key);
+		}
+		
+	    public ARFBaseLearner getConceptLearner(int key) {
+			return historyList.get(key).getBaseLearner();
+	    }
+				
         public void resetHistory(){
 	    		historyList.clear();
 	    		historyList=new HashMap<Integer,ConceptLearner> ();
 	    		System.out.println("Concept History reset");
         }
+        
 	    	    
 	}
     
     //Concept_representation = (model, last_weight, last_used_timestamp, conceptual_vector)
-    public class ConceptLearner extends Concept {
+    public class ConceptLearner {
 
     		// Concept attributes
     		protected int index;
@@ -897,9 +961,9 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
     		protected long createdOn;
     		protected long classifiedInstances;
     		protected long instancesSeen;
-    		ARFBaseLearner conceptLearner;
+    		protected ARFBaseLearner conceptLearner;
     		
-	    // Constructor
+   	    // Constructor
 	    public ConceptLearner(int index, ARFHoeffdingTree classifier, BasicClassificationPerformanceEvaluator evaluator, 
 	    						long createdOn, long classifiedInstances, long instancesSeen, Window lastErrors, 
 	    						boolean useDriftDetector, ClassOption driftOption, ClassOption warningOption, 
@@ -916,9 +980,13 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 	                    false, useDriftDetector, driftOption, warningOption, true, useRecurringLearner, isOldModel, lastErrors);
 	    }
 	    
+	    public int getIndex() {
+			return index;	    	
+	    }
 	    
-        
-	    	   
+	    public ARFBaseLearner getBaseLearner() {
+			return conceptLearner;	    	
+	    }   
 	}
     
     public static class Concept {
