@@ -161,7 +161,7 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
 	     		this.window = new ArrayList<Double>();
 	     		this.resizingEnabled=resizingEnabled;
 	     		this.priorEstimation=priorEstimation;
-	     		this.windowResizePolicy=windowResizePolicy; // TODO -> hardcoded by now at a default value. this should be a parameter accepted by the constructor
+	     		this.windowResizePolicy=windowResizePolicy; 
          }
 
          // It adds errors per classified row
