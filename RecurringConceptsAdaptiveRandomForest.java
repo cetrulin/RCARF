@@ -536,7 +536,7 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
         public void trainOnInstance(Instance instance, double weight, long instancesSeen) {
             Instance weightedInstance = (Instance) instance.copy();
             weightedInstance.setWeight(instance.weight() * weight);
-            //Dont train this if its an old model (from concept history)
+            // Dont train this if its an old model (from concept history)
             if (!this.isOldLearner) this.classifier.trainOnInstance(weightedInstance);
             // Dont train bkg model if it doesnt exist
             if(this.bkgLearner != null) this.bkgLearner.classifier.trainOnInstance(instance);
@@ -544,39 +544,20 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
             // Should it use a drift detector? Also, is it a backgroundLearner? If so, then do not "incept" another one. 
             if(this.useDriftDetector && !this.isBackgroundLearner) {
                 boolean correctlyClassifies = this.classifier.correctlyClassifies(instance);
-                
-                /*// TEST ONLY
-                internalWindowEvaluator = new DynamicWindowClassificationPerformanceEvaluator (
-                		this.windowProperties.getWindowSize(),this.windowProperties.getWindowIncrements(),this.windowProperties.getMinWindowSize(),
-                		this.lastError,this.windowProperties.getDecisionThreshold(),true,this.windowProperties.getResizingPolicy()); 
-                internalWindowEvaluator.reset();
-                */
-                
+
                 // Check for warning only if useBkgLearner is active
-                if(this.useBkgLearner) {                    
-                    // Update the warning detection method
+                if(this.useBkgLearner) {       
+                    /*********** warning detection ***********/
+                    // Update the WARNING detection method
                     this.warningDetectionMethod.input(correctlyClassifies ? 0 : 1);
-                         
-                    // Check if there was a change (=WARNING CASE @suarezcetrulo)
-                    if(this.warningDetectionMethod.getChange()) {                			
-                        this.lastWarningOn = instancesSeen;
-                        this.errorBeforeWarning = this.lastError; // added by @suarezcetrulo : TODO check that its alright
-                        this.numberOfWarningsDetected++;
-                        
-                        //Start of warning window
-                        startWarningWindow();
-
-                        // Update the warning detection object for the current object 
-                        // (this effectively resets changes made to the object while it was still a bkg learner). 
-                        this.warningDetectionMethod = ((ChangeDetector) getPreparedClassOption(this.warningOption)).copy();
+                    // Check if there was a change 
+                    if(this.warningDetectionMethod.getChange()) {                			                        
+                        startWarningWindow(instancesSeen);
                     } else {
-                    		this.lastError = this.evaluator.getFractionIncorrectlyClassified(); // TODO: should this be in the same iteration of the warning?                		
-                    		// TODO. change this to ConceptLearnerResults or similar
-                    } // TODO. Need to understand what happens with false Alarms
-                }
-
-                /*********** drift detection ***********/
-                
+                    		this.lastError = this.evaluator.getFractionIncorrectlyClassified(); // TODO: should this be in the same iteration of the warning? 
+                    		// TODO: should we also copy the current classifier in here? (to have the copy before raising a warning)
+                    } /*********** ************* ***********/
+                } /*********** drift detection ***********/
                 // Update the DRIFT detection method
                 this.driftDetectionMethod.input(correctlyClassifies ? 0 : 1);
                 // Check if there was a change
@@ -584,8 +565,9 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
                     this.lastDriftOn = instancesSeen;
                     this.numberOfDriftsDetected++;
                     this.reset();
-                }
-                // TODO. If its false alarm, we should set oldLearners and bgkLearners as NULL
+                } /*********** ************* ***********/
+                // TODO. If its false alarm, we should set oldLearners and bgkLearners as NULL.
+                // Need to understand what happens with false Alarms
             }
         }
 
@@ -593,7 +575,14 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 		// ADDED IN RCARF by  @suarezcetrulo
 		// ////////////////////////////////////////////////
         
-        public void startWarningWindow() {
+        // Warning window
+        public void startWarningWindow(long instancesSeen) {
+            this.lastWarningOn = instancesSeen;
+            this.numberOfWarningsDetected++;
+        	
+        		// 0 Save error before warning
+            this.errorBeforeWarning = this.lastError;
+
             // 1 Create background Model
             createBkgModel();
 
@@ -604,9 +593,14 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
             		saveActiveModelOnWarning();
     				// 3 Create concept learners of the old classifiers to compare against the bkg model
     				retrieveOldModels(); 	
-            } System.out.println("WARNING ACTIVE IN MODEL #"+this.indexOriginal+"with background model running #"+bkgLearner.indexOriginal); //@suarezcetrulo
+            } System.out.println("WARNING ACTIVE IN MODEL #"+this.indexOriginal+"with background model running #"+bkgLearner.indexOriginal);
+            
+            // Update the warning detection object for the current object 
+            // (this effectively resets changes made to the object while it was still a bkg learner). 
+            this.warningDetectionMethod = ((ChangeDetector) getPreparedClassOption(this.warningOption)).copy();
         }
         
+        // Creates BKG Model in warning window
         public void createBkgModel() {
             // Create a new bkgTree classifier
             ARFHoeffdingTree bkgClassifier = (ARFHoeffdingTree) this.classifier.copy();
@@ -629,15 +623,15 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
             									   this.windowProperties, bkgInternalWindowEvaluator); // added last inputs parameter by @suarezcetrulo        	
         }
         
-        
+        // Saves a backup of the active model that raised a warning to be stored in the concept history in case of drift.
         public void saveActiveModelOnWarning() {
 	    		this.tmpCopyOfModel.reset();
 	    		this.tmpCopyOfModel = new Concept(indexOriginal, (ARFHoeffdingTree) this.classifier.copy(), this.createdOn, 
-	    						(long) this.evaluator.getPerformanceMeasurements()[0].getValue(), instancesSeen, this.windowProperties);//this.internalWindowEvaluator);
+	    						(long) this.evaluator.getPerformanceMeasurements()[0].getValue(), instancesSeen, this.windowProperties);
 	    		// Add the model accumulated error (from the start of the model) from the iteration before the warning
 	    		this.tmpCopyOfModel.setErrorBeforeWarning(errorBeforeWarning);
-	    		// A simple concept to be stored in the concept history that doesn't have a running learner..
-	    		// This doesn't train. It keeps the model as it was at the beginning of the training window, to be stored in case of drift.
+	    		// A simple concept to be stored in the concept history that doesn't have a running learner.
+	    		// This doesn't train. It keeps the model as it was at the beginning of the training window to be stored in case of drift.
         }
 
         public void retrieveOldModels() {
@@ -655,7 +649,8 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
         			DynamicWindowClassificationPerformanceEvaluator auxConceptInternalWindow = 
         					new DynamicWindowClassificationPerformanceEvaluator(
         	                		this.windowProperties.getWindowSize(),this.windowProperties.getWindowIncrements(),this.windowProperties.getMinWindowSize(),
-        	                		this.lastError,this.windowProperties.getDecisionThreshold(),false, this.windowProperties.getResizingPolicy());  // TODO: false hardcored. it should read from the flagoption  backgroundDynamicWindowsFlag	
+        	                		this.lastError,this.windowProperties.getDecisionThreshold(),
+        	                		this.windowProperties.getDynamicWindowInOldModelsFlag(), this.windowProperties.getResizingPolicy());  	
         			auxConceptInternalWindow.reset();        			
         			 //TODO: we need to initialize all these!"
         			
@@ -902,7 +897,7 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
     
     
     
-    // TODO: window related params + last estimation could be enough.
+    // Window-related parameters for classifier internal comparisons during the warning window 
     public class Window{
     	
 	    	// Window properties
@@ -913,10 +908,7 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 	    	double decisionThreshold;
 	    	int windowResizePolicy;
 	    	boolean backgroundDynamicWindowsFlag;
-	    	boolean rememberWindowSize;
-	    	
-	    //double latestError; //avg error obtained from the last window	
-	    	
+	    	boolean rememberWindowSize;	    	
 
 		public Window(int windowSize, int windowIncrements, int minWindowSize, 
 					  double decisionThreshold, boolean rememberWindowSize, 
@@ -939,14 +931,6 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 		public void setWindowSize(int windowSize) {
 			this.windowSize = windowSize;
 		}
-		
-		/*public double getLatestError() {
-			return this.latestError;
-		}
-
-		public void setLatestError(double latestError) {
-			this.latestError = latestError;
-		}*/
 
 		public int getWindowIncrements() {
 			return windowIncrements;
@@ -979,40 +963,18 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 		public void setResizingPolicy(int value) {
 			this.windowResizePolicy = value;
 		}
+		
+		public boolean getDynamicWindowInOldModelsFlag() {
+			return backgroundDynamicWindowsFlag;
+		}
+
+		public void getDynamicWindowInOldModelsFlag(boolean flag) {
+			this.backgroundDynamicWindowsFlag = flag;
+		}
+		
     }
     
-    
-	/*public class ConceptLearnerResults extends ConceptResults{
-	    	
-	    	// Window properties
-	    	int windowSize;   
-		int windowIncrements;
-	    	int minWindowSize;
-	    	double decisionThreshold;
-	    	
-	    	// Actual evaluator containing dynamic window of errors
-	    	DynamicWindowClassificationPerformanceEvaluator evaluator;
-	
-		public ConceptLearnerResults(int windowSize, int windowIncrements, int minWindowSize, double decisionThreshold, DynamicWindowClassificationPerformanceEvaluator evaluator) {
-			this.windowSize=windowSize;
-			this.windowIncrements=windowIncrements;
-			this.minWindowSize=minWindowSize;
-			this.decisionThreshold=decisionThreshold;
-			this.evaluator=evaluator;
-		}
-	
-		public void resetEvaluator(){
-			this.evaluator.reset();
-			// TODO. we may also need a reset that receives the updated parameters of the dynamic window
-		}
-		
-	    public void clearEvaluator() {
-	    	this.evaluator.reset(); // not sure if this has the same effect that the line commented below. TODO to check
-	 		// this.lastErrors.clear(); // it should to this
-	    }
-		
-    }*/
-    
+    // A concept object that describes a model and the meta-data associated to this in the concept history.
     public static class Concept {
 
 		// Concept attributes
@@ -1030,7 +992,9 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 	    }
 			
 	    // Constructor
-	    public Concept(int index, ARFHoeffdingTree classifier,long createdOn, long classifiedInstances, long instancesSeen, Window internalWindowProperties){
+	    public Concept(int index, ARFHoeffdingTree classifier,
+					  long createdOn, long classifiedInstances, long instancesSeen, 
+					  Window internalWindowProperties){
 	    		this.index=index;
 	    		this.classifier=classifier;
 	    		this.createdOn=createdOn;
