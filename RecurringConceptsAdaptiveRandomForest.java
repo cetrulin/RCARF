@@ -207,26 +207,21 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
         for (int i = 0 ; i < this.ensemble.length ; i++) {
             DoubleVector vote = new DoubleVector(this.ensemble[i].getVotesForInstance(instance));
             InstanceExample example = new InstanceExample(instance);
-            // Aqui añade ejemplo a evaluador
+            // 1 Testing in active model
             this.ensemble[i].evaluator.addResult(example, vote.getArrayRef());
-            // Aqui añade ejemplo a evaluador interno
-            // TODO: if warning window open
-            if(this.ensemble[i].internalWindowEvaluator!=null) this.ensemble[i].internalWindowEvaluator.addResult(example, vote.getArrayRef());
-            // Aqui añade ejemplo a evaluador interno de los old concepts 
-            // todo:this.ensemble[i].evaluator.addResult(example, vote.getArrayRef());
             
-    		/*
-    		LIKE THIS (ONLY AS EXAMPLE)
-    		// Add error to main classifier window
-    		this.bkgLearner.internalWindowEvaluator.add((long) this.bkgLearner.evaluator.getPerformanceMeasurements()[1].getValue()); // convert in error. still accuracy percent
-    		if(ConceptHistory.backgroundDynamicWindowsFlag>=1) this.bkgLearner.internalWindowEvaluator.evaluator.windowResize((((ConceptHistory.decisionThreshold==-1) ? -1.0 : this.errorBeforeWarning))); // we add error of main classifier in all the classifiers (bkg or old)
-    		
-    		// Dynamic windows for old models
-    		for (ConceptLearner auxConcept : oldLearners.getConceptHistoryValues()) {
-    			auxConcept.conceptLearner.internalWindowEvaluator.add((long) auxConcept.conceptLearner.evaluator.getPerformanceMeasurements()[1].getValue()); // Convert in error. still accuracy percent
-    			if (ConceptHistory.backgroundDynamicWindowsFlag==2) auxConcept.conceptLearner.evaluator.windowResize((((ConceptHistory.decisionThreshold==-1) ? -1.0 : this.errorBeforeWarning)));
-    		}*/
-            
+            if(!disableRecurringDriftDetectionOption.isSet()) {
+	            // 2 If the warning window is open, testing in background model internal evaluator (for comparison purposes) 
+	            if(this.ensemble[i].bkgLearner != null && this.ensemble[i].bkgLearner.internalWindowEvaluator!=null) 
+	            		this.ensemble[i].bkgLearner.internalWindowEvaluator.addResult(example, vote.getArrayRef());
+	            // 3 If the concept history is ready and it contains old models, testing in each old model internal evaluator (to compare against bkg one)
+	            if(this.ensemble[i].historySnapshot != null && (this.ensemble[i].historySnapshot).getNumberOfConcepts() > 0) {
+		            	for (DynamicWindowClassificationPerformanceEvaluator conceptEvaluator : 
+		            		(this.ensemble[i].historySnapshot).getInternalEvaluators()) { 
+		            		conceptEvaluator.addResult(example, vote.getArrayRef()); // TODO: test this
+		            	}
+	            }
+            }
             
             int k = MiscUtils.poisson(this.lambdaOption.getValue(), this.classifierRandom);
             if (k > 0) {
@@ -350,7 +345,7 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
                 warningDetectionMethodOption,
                 false,
                 ! this.disableRecurringDriftDetectionOption.isSet(),
-                false, // @suarezcetrulo : first model is not old.
+                false, // @suarezcetrulo : first model is not old. // TODO am I using this flag?
                 new Window(this.defaultWindowOption.getValue(), this.windowIncrementsOption.getValue(), this.minWindowSizeOption.getValue(), this.thresholdOption.getValue(), 
         				this.rememberConceptWindowOption.isSet()? true: false, this.resizeAllWindowsOption.isSet()? true: false, windowResizePolicyOption.getValue()),
                 null // @suarezcetrulo : Windows start at NULL (till the first earning is reached)
@@ -439,9 +434,6 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 
             // Window params
             this.windowProperties=windowProperties;
-            // If window size inheritance is enabled, get the previous model window size. Otherwise reset it to its defaultvalue.
-            this.windowProperties.setWindowSize(((windowProperties.rememberWindowSize) ? 
-            										windowProperties.getWindowSize(): windowProperties.windowDefaultSize)); //TODO: get window size from internalEvaluator?
                         
             // Recurring drifts
             this.isOldLearner = isOldLearner;
@@ -478,49 +470,39 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 			System.out.println("RESET IN MODEL #"+this.indexOriginal);
 			// 1 Compare DT results using Window method and pick the best one
 			if(this.useRecurringLearner && this.historySnapshot != null)  compareModels();
-			
+						
 			// 2 Transition to the best bkg or retrieved old learner
-        		if (this.recurringConceptDetected && this.bestRecurringLearner != null) { //&& this.useRecurringLearner (condition implicit in the others)
-	            System.out.println("RECURRING DRIFT RESET IN MODEL #"+this.indexOriginal+" TO MODEL #"+this.bestRecurringLearner.indexOriginal);       
-
-	            // 3 Move copy of active model made before warning to Concept History
-	            ConceptHistory.historyList.put(tmpCopyOfModel.index, tmpCopyOfModel); // TODO. save a copy/clone
+        		if ((this.recurringConceptDetected && this.bestRecurringLearner != null) || (this.useBkgLearner && this.bkgLearner != null)) { //&& this.useRecurringLearner (condition implicit in the others)
+        			ARFBaseLearner newActiveModel = null;
+        			
+    	            // 3 Move copy of active model made before warning to Concept History
+    	            ConceptHistory.historyList.put(tmpCopyOfModel.index, tmpCopyOfModel.copy());
+    	            
+	            // 4 Pick new active model (the best one selected in step 1)
+	            if(this.recurringConceptDetected && this.bestRecurringLearner != null) newActiveModel = this.bestRecurringLearner; // System.out.println("RECURRING DRIFT RESET IN MODEL #"+this.indexOriginal+" TO MODEL #"+this.bestRecurringLearner.indexOriginal);   
+	            else if(this.useBkgLearner && this.bkgLearner != null) newActiveModel = this.bkgLearner; // System.out.println("DRIFT RESET IN MODEL #"+this.indexOriginal+" TO NEW MODEL #"+this.bkgLearner.indexOriginal); 
 	            
-	            // 4 New active model is the best retrieved old model
-                this.classifier = this.bestRecurringLearner.classifier;
-                this.driftDetectionMethod = this.bestRecurringLearner.driftDetectionMethod;
-                this.warningDetectionMethod = this.bestRecurringLearner.warningDetectionMethod;
-                this.evaluator = this.bestRecurringLearner.evaluator;
-                this.createdOn = this.bestRecurringLearner.createdOn;
-                this.windowProperties=this.bestRecurringLearner.windowProperties;
+                // 5 Update window size in window properties depending on window size inheritance flag (entry parameter/Option)
+                newActiveModel.windowProperties.setSize(((newActiveModel.windowProperties.rememberWindowSize) ? 
+                		newActiveModel.internalWindowEvaluator.getWindowSize() : newActiveModel.windowProperties.windowDefaultSize)); 
+	            
+	            // 6 New active model is the best retrieved old model
+                this.windowProperties=newActiveModel.windowProperties;
+                this.classifier = newActiveModel.classifier;
+                this.driftDetectionMethod = newActiveModel.driftDetectionMethod;
+                this.warningDetectionMethod = newActiveModel.warningDetectionMethod;
+                this.evaluator = newActiveModel.evaluator;
+                this.createdOn = newActiveModel.createdOn;
                 
-                // 5 Clear remove background and old learners 
+                // 7 Clear remove background and old learners 
                 cleanWarningWindow ();
         		} 
-        		else if(this.useBkgLearner && this.bkgLearner != null) {  
-    	            System.out.println("DRIFT RESET IN MODEL #"+this.indexOriginal+" TO NEW MODEL #"+this.bkgLearner.indexOriginal); 
-    	            // 3 Move copy of active model made before warning to Concept History
-    	            ConceptHistory.historyList.put(tmpCopyOfModel.index, tmpCopyOfModel); // TODO. save a copy/clone
-    	            
-    	            // 4 New active model is the background model
-                this.classifier = this.bkgLearner.classifier;
-                this.driftDetectionMethod = this.bkgLearner.driftDetectionMethod;
-                this.warningDetectionMethod = this.bkgLearner.warningDetectionMethod;
-                this.windowProperties=this.bkgLearner.windowProperties;
-                this.evaluator = this.bkgLearner.evaluator;
-                this.createdOn = this.bkgLearner.createdOn;
-                
-                // 5 Clear remove background and old learners 
-                cleanWarningWindow();
-            }
             else { //TODO: is this the false alarm? or where is it?
                 this.classifier.resetLearning();
                 this.createdOn = instancesSeen;
                 this.driftDetectionMethod = ((ChangeDetector) getPreparedClassOption(this.driftOption)).copy();
             }
-            this.evaluator.reset();
-    		    // TODO: We also need to reset, clear and remove the BKG AND OLD Learners here
-
+            this.evaluator.reset(); // TODO: if this is due to a false alarm, we should be doing cleanWarningWindow() here and adding this line inside
         }
 
         public void trainOnInstance(Instance instance, double weight, long instancesSeen) {
@@ -567,17 +549,17 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
         
         // Clean warning window (removes all learners)
         public void cleanWarningWindow () {
-            // Reset concept history
-            historySnapshot.resetHistory();
-            historySnapshot = null;
-            
-            // Reset recurring concept
-            this.bestRecurringLearner = null; // only a double check. 
-            this.recurringConceptDetected = false; // only a double check.
-            
-            // Reset bkg evaluator
+            // 1 Reset bkg evaluator
             this.bkgLearner = null;
-            this.internalWindowEvaluator = null; // added by @suarezcetrulo
+            this.internalWindowEvaluator = null; // only a double check, as it should be always null (only used in background + old concept Learners)
+            
+            // 2 Reset recurring concept
+            this.bestRecurringLearner = null; 
+            this.recurringConceptDetected = false; 
+            
+            // 3 Reset concept history
+            this.historySnapshot.resetHistory();
+            this.historySnapshot = null;
         }
         
         // Starts Warning window
@@ -585,21 +567,20 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
             this.lastWarningOn = instancesSeen;
             this.numberOfWarningsDetected++;
         	
-        		// 0 Save error before warning
+        		// 1 Save error before warning
             this.errorBeforeWarning = this.lastError;
 
-            // 1 Create background Model
-            createBkgModel();
+            // 2 Create background Model
+            createBkgModel(instancesSeen);
 
             // If we search explicitly for recurring concepts (parameter activated), then we need to deal with a concept history.
             // Therefore, we need to start the warning window and save a copy of the current classifier to be saved in the history in case of drift.
             if(this.useRecurringLearner) {
-    				// 2 Temporally copy the current classifier in a concept object (it still will be in use until the Drift is confirmed). 
-            		saveActiveModelOnWarning();
-    				// 3 Create concept learners of the old classifiers to compare against the bkg model
+    				// 3 Temporally copy the current classifier in a concept object (it still will be in use until the Drift is confirmed). 
+            		saveActiveModelOnWarning(instancesSeen);
+    				// 4 Create concept learners of the old classifiers to compare against the bkg model
     				retrieveOldModels(); 	
             } System.out.println("WARNING ACTIVE IN MODEL #"+this.indexOriginal+"with background model running #"+bkgLearner.indexOriginal);
-            
             // Update the warning detection object for the current object 
             // (this effectively resets changes made to the object while it was still a bkg learner). 
             this.warningDetectionMethod = ((ChangeDetector) getPreparedClassOption(this.warningOption)).copy();
@@ -607,36 +588,36 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
         
         
         // Saves a backup of the active model that raised a warning to be stored in the concept history in case of drift.
-        public void saveActiveModelOnWarning() {
-	    		this.tmpCopyOfModel.reset();
+        public void saveActiveModelOnWarning(long instancesSeen) {
+        		// 1 Delete previous copy (if any)
+	    		this.tmpCopyOfModel.reset();	    		
 	    		this.tmpCopyOfModel = new Concept(indexOriginal, (ARFHoeffdingTree) this.classifier.copy(), this.createdOn, 
-	    						(long) this.evaluator.getPerformanceMeasurements()[0].getValue(), instancesSeen, this.windowProperties);
-	    		// Add the model accumulated error (from the start of the model) from the iteration before the warning
-	    		this.tmpCopyOfModel.setErrorBeforeWarning(errorBeforeWarning);
+	    						(long) this.evaluator.getPerformanceMeasurements()[0].getValue(), instancesSeen, this.windowProperties.copy());
+	    		// 2 Add the model accumulated error (from the start of the model) from the iteration before the warning
+	    		this.tmpCopyOfModel.setErrorBeforeWarning(this.errorBeforeWarning);
 	    		// A simple concept to be stored in the concept history that doesn't have a running learner.
 	    		// This doesn't train. It keeps the model as it was at the beginning of the training window to be stored in case of drift.
         }
         
         // Creates BKG Model in warning window
-        public void createBkgModel() {
-            // Create a new bkgTree classifier
+        public void createBkgModel(long instancesSeen) {
+            // 1 Create a new bkgTree classifier
             ARFHoeffdingTree bkgClassifier = (ARFHoeffdingTree) this.classifier.copy();
             bkgClassifier.resetLearning();
                                     
-            // Resets the evaluator
+            // 2 Resets the evaluator
             BasicClassificationPerformanceEvaluator bkgEvaluator = (BasicClassificationPerformanceEvaluator) this.evaluator.copy();
             bkgEvaluator.reset();
             
-            // Adding also internal evaluator (window) in bkgEvaluator (by @suarezcetrulo)
+            // 3 Adding also internal evaluator (window) in bkgEvaluator (by @suarezcetrulo)
             DynamicWindowClassificationPerformanceEvaluator bkgInternalWindowEvaluator = new DynamicWindowClassificationPerformanceEvaluator (
-            		this.windowProperties.getWindowSize(),this.windowProperties.getWindowIncrements(),this.windowProperties.getMinWindowSize(),
+            		this.windowProperties.getSize(),this.windowProperties.getIncrements(),this.windowProperties.getMinSize(),
             		this.lastError,this.windowProperties.getDecisionThreshold(),true,this.windowProperties.getResizingPolicy());  
             bkgInternalWindowEvaluator.reset();
             
-            // Create a new bkgLearner object
+            // 4 Create a new bkgLearner object (TODO: IF I SEE REPEATED INDEXES IT MAY BE DUE TO THIS, IT'S SENDING THE SAME INDEX. WE'D HAVE TO CREATE A NEW ONE -  MAYBE USING AN STATIC PARAM IN THE CONCEPT HISTORY(?) - SEE HOW'S DONE THIS IN THE ENSEMBLE)
             this.bkgLearner = new ARFBaseLearner(indexOriginal, bkgClassifier, bkgEvaluator, instancesSeen, 
-            									   this.useBkgLearner, this.useDriftDetector, this.driftOption, 
-            									   this.warningOption, true, this.useRecurringLearner, false, 
+            		this.useBkgLearner, this.useDriftDetector, this.driftOption, this.warningOption, true, this.useRecurringLearner, false, 
             									   this.windowProperties, bkgInternalWindowEvaluator); // added last inputs parameter by @suarezcetrulo        	
         }
 
@@ -644,32 +625,27 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
         		this.historySnapshot = new ConceptHistoryLearners();
         		this.historySnapshot.resetHistory();
         		
-        		// Dynamic windows for old models
+        		// 1 Get old classifiers from an snapshot of the Concept History
         		for (Concept auxConcept : ConceptHistory.getConceptHistorySnapshot().values()) {
-            		//if(ConceptHistory.rememberWindowFlag) auxConcept.getLastErrors().clear(); // clears content but keeps window size
-            		//else auxConcept.getLastErrors().reset(); // restart content and size of the window
-            		//TODO. we need to rewrite this so we basically create a new ConceptLearnerObject with its respective input parameters (inherited or not depending on the above flag)	
-        			//ConceptLearnerResults auxConceptInternalWindow = new ConceptLearnerResults(this.windowSize, ConceptHistory.windowIncrements, ConceptHistory.minWindowSize, 
-        			//		ConceptHistory.decisionThreshold, (DynamicWindowClassificationPerformanceEvaluator) this.bkgLearner.internalWindowEvaluator.evaluator.copy()); // TODO: is this ok? get maybe?
-        			//TODO also as said: put the input parameters in this this.object and  not in the concepthistory static class
-        			DynamicWindowClassificationPerformanceEvaluator auxConceptInternalWindow = 
-        					new DynamicWindowClassificationPerformanceEvaluator(
-        	                		this.windowProperties.getWindowSize(),this.windowProperties.getWindowIncrements(),this.windowProperties.getMinWindowSize(),
-        	                		this.lastError,this.windowProperties.getDecisionThreshold(),
-        	                		this.windowProperties.getDynamicWindowInOldModelsFlag(), this.windowProperties.getResizingPolicy());  	
-        			auxConceptInternalWindow.reset();        			
-        			 //TODO: we need to initialize all these!"
         			
-            		// Creates a Background Learner for each historic concept
-        			historySnapshot.pushConceptLearner(new ConceptLearner(auxConcept.getIndex(), 
-        					auxConcept.getModel(), (BasicClassificationPerformanceEvaluator) this.evaluator.copy(), // we still evaluate performance of the model with the same evaluator
-        					auxConcept.getNumberOfInstancesProcessedByCreation(), auxConcept.getNumberOfInstancesClassified(), 
-        					auxConcept.getNumberOfInstancesSeen(), this.windowProperties, auxConceptInternalWindow, // TODO add WindowClassificationPerformanceEvaluator
-        					this.useDriftDetector, this.driftOption, this.warningOption, this.useRecurringLearner, true)); // last param true as this refers to old models
+                 // 2 Resets the evaluator for each of the Concept History
+                 BasicClassificationPerformanceEvaluator auxConceptEvaluator = (BasicClassificationPerformanceEvaluator) this.evaluator.copy();
+                 auxConceptEvaluator.reset();
+        			
+        			// 3 Create an internal evaluator for each of the Concept History
+        			DynamicWindowClassificationPerformanceEvaluator auxConceptInternalWindow = new DynamicWindowClassificationPerformanceEvaluator(
+        				auxConcept.windowProperties.getSize(), auxConcept.windowProperties.getIncrements(), auxConcept.windowProperties.getMinSize(),
+	        			this.lastError, auxConcept.windowProperties.getDecisionThreshold(),
+	        			auxConcept.windowProperties.getDynamicWindowInOldModelsFlag(), auxConcept.windowProperties.getResizingPolicy());  	
+        			auxConceptInternalWindow.reset();        			
+        			
+            		// Creates a Concept Learner for each historic concept
+        			// It sends a copy of the active evaluator only for reference, as it's only used at the end if the active model transitions to the given concept.
+        			historySnapshot.pushConceptLearner(new ConceptLearner(auxConcept.getIndex(), auxConcept.getModel(), auxConceptEvaluator, 
+    					auxConcept.getNumberOfInstancesProcessedByCreation(), auxConcept.getNumberOfInstancesClassified(), auxConcept.getNumberOfInstancesSeen(), 
+    					auxConcept.windowProperties, auxConceptInternalWindow, this.useDriftDetector, this.driftOption, this.warningOption, this.useRecurringLearner, true)); // last param true as this refers to old models
         		}
-        		// Dynamic Window for main model (on test and training) - it shouldn´t be necessary. as maximum get the priorError
-    			//this.internalWindowEvaluator = null;    // .clear();       			
-
+ 			
         		// Dynamic Window for Background model, it starts with the default size.
             this.bkgLearner.internalWindowEvaluator = null;    // .clear(); 
             this.bkgLearner.internalWindowEvaluator = this.internalWindowEvaluator; 
@@ -748,16 +724,7 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 
     		// Concurrent Concept History List
     		public static ConcurrentHashMap<Integer,Concept> historyList = new ConcurrentHashMap<Integer,Concept> ();
-    		
-    		/*// Dynamic Sliding window properties
-    		public static boolean rememberWindowFlag;
-    		public static int defaultWindow;
-    		public static int windowIncrements;
-    		public static int minWindowSize;
-    		public static double decisionThreshold;
-    		public static int backgroundDynamicWindowsFlag;*/
-
-    		
+    		    		
     		public ConceptHistory(){
         		historyList=new ConcurrentHashMap<Integer,Concept> ();
         		System.out.println("Concept History created");
@@ -792,31 +759,6 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
         		return historyList.size();
         }
         
-       /* // Setters (for flags)
-        public static void setRememberWindowFlag(boolean parameter) {
-	    		rememberWindowFlag=parameter;
-		}
-        
-        public static void setDefaultWindowValue(int value) {
-	    		defaultWindow=value;
-		}
-        
-        public static void setWindowIncrementsValue(int value) {
-        		windowIncrements=value;
-		}
-        
-        public static void setMinWindowSizeValue(int value) {
-        		minWindowSize=value;
-		}
-        
-        public static void setThresholdValue(double value) {
-    			decisionThreshold=value;
-        }
-        
-        public static void setBackgroundDynamicWindowsFlag(int value) {
-        		backgroundDynamicWindowsFlag=value;
-        }*/
-        
     }
     
     public class ConceptHistoryLearners {
@@ -847,7 +789,16 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 	    public ARFBaseLearner getConceptLearner(int key) {
 			return historyList.get(key).getBaseLearner();
 	    }
+	    
+	    public int getNumberOfConcepts() {
+	    		return historyList.size();
+	    }
 				
+	    public Collection<DynamicWindowClassificationPerformanceEvaluator> getInternalEvaluators(){
+	    		return ((Collection <ConceptLearner>) this.historyList.values()).
+	    				
+	    }
+	    
         public void resetHistory(){
 	    		historyList.clear();
 	    		historyList=new HashMap<Integer,ConceptLearner> ();
@@ -867,9 +818,9 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
     		protected ARFBaseLearner conceptLearner;
     		
    	    // Constructor
-	    public ConceptLearner(int index, ARFHoeffdingTree classifier, BasicClassificationPerformanceEvaluator evaluator, 
+	    public ConceptLearner(int index, ARFHoeffdingTree classifier, BasicClassificationPerformanceEvaluator conceptEvaluator,
 	    						long createdOn, long classifiedInstances, long instancesSeen,
-	    						Window windowProperties, DynamicWindowClassificationPerformanceEvaluator auxConceptInternalWindow, 
+	    						Window windowProperties, DynamicWindowClassificationPerformanceEvaluator internalConceptEvaluator, 
 	    						boolean useDriftDetector, ClassOption driftOption, ClassOption warningOption, 
 	    						boolean useRecurringLearner, boolean isOldModel){
 	    	
@@ -879,18 +830,10 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 	    		this.instancesSeen=instancesSeen;
 	    		this.classifiedInstances=classifiedInstances;
 	    		
-	    		BasicClassificationPerformanceEvaluator conceptEvaluator = evaluator;
-	    		conceptEvaluator.reset();       
-	    		
-	    		// TODO: is it ok sending the param this way?
-	    		DynamicWindowClassificationPerformanceEvaluator internalConceptEvaluator = auxConceptInternalWindow; 
-    			internalConceptEvaluator.reset(); // TODO: is reset ok? it should...  
-    			
-    			// TODO: change window properties? as latest error
-            
-	    		this.conceptLearner = new ARFBaseLearner(index, classifier, conceptEvaluator, instancesSeen, 
-	                    false, useDriftDetector, driftOption, warningOption, true, useRecurringLearner, isOldModel, windowProperties, internalConceptEvaluator);
-	    }
+	    		// Create concept learner
+			this.conceptLearner = new ARFBaseLearner(index, classifier, conceptEvaluator, instancesSeen, 
+                    false, useDriftDetector, driftOption, warningOption, true, useRecurringLearner, isOldModel, windowProperties, internalConceptEvaluator);
+    }
 	    
 	    public int getIndex() {
 			return index;	    	
@@ -899,86 +842,9 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 	    public ARFBaseLearner getBaseLearner() {
 			return conceptLearner;	    	
 	    }   
+	    
+	    
 	}
-    
-    
-    
-    // Window-related parameters for classifier internal comparisons during the warning window 
-    public class Window{
-    	
-	    	// Window properties
-	    	int windowSize;   
-	    	int windowDefaultSize;   
-	    	int windowIncrements;
-	    	int minWindowSize;
-	    	double decisionThreshold;
-	    	int windowResizePolicy;
-	    	boolean backgroundDynamicWindowsFlag;
-	    	boolean rememberWindowSize;	    	
-
-		public Window(int windowSize, int windowIncrements, int minWindowSize, 
-					  double decisionThreshold, boolean rememberWindowSize, 
-					  boolean backgroundDynamicWindowsFlag, int windowResizePolicy) {
-			this.windowSize=windowSize;
-			this.windowDefaultSize=windowSize; // the default size of a window could change overtime if there is window sizw inheritance enabled
-			this.windowIncrements=windowIncrements;
-			this.minWindowSize=minWindowSize;
-			this.decisionThreshold=decisionThreshold;
-			this.backgroundDynamicWindowsFlag=backgroundDynamicWindowsFlag;
-			this.windowResizePolicy=windowResizePolicy;
-			this.rememberWindowSize=rememberWindowSize;
-		}
-		
-		
-		public int getWindowSize() {
-			return windowSize;
-		}
-
-		public void setWindowSize(int windowSize) {
-			this.windowSize = windowSize;
-		}
-
-		public int getWindowIncrements() {
-			return windowIncrements;
-		}
-
-		public void setWindowIncrements(int windowIncrements) {
-			this.windowIncrements = windowIncrements;
-		}
-
-		public int getMinWindowSize() {
-			return minWindowSize;
-		}
-
-		public void setMinWindowSize(int minWindowSize) {
-			this.minWindowSize = minWindowSize;
-		}
-
-		public double getDecisionThreshold() {
-			return decisionThreshold;
-		}
-
-		public void setDecisionThreshold(double decisionThreshold) {
-			this.decisionThreshold = decisionThreshold;
-		}
-		
-		public int getResizingPolicy() {
-			return windowResizePolicy;
-		}
-
-		public void setResizingPolicy(int value) {
-			this.windowResizePolicy = value;
-		}
-		
-		public boolean getDynamicWindowInOldModelsFlag() {
-			return backgroundDynamicWindowsFlag;
-		}
-
-		public void getDynamicWindowInOldModelsFlag(boolean flag) {
-			this.backgroundDynamicWindowsFlag = flag;
-		}
-		
-    }
     
     // A concept object that describes a model and the meta-data associated to this in the concept history.
     public static class Concept {
@@ -989,7 +855,7 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 		protected long createdOn;
 		protected long classifiedInstances;
 		protected long instancesSeen;
-		protected Window internalWindowProperties;
+		protected Window windowProperties;
 		
 		protected double errorBeforeWarning;
 	
@@ -1000,11 +866,11 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 	    // Constructor
 	    public Concept(int index, ARFHoeffdingTree classifier,
 					  long createdOn, long classifiedInstances, long instancesSeen, 
-					  Window internalWindowProperties){
+					  Window windowProperties){
 	    		this.index=index;
 	    		this.classifier=classifier;
 	    		this.createdOn=createdOn;
-	    		this.internalWindowProperties=internalWindowProperties;
+	    		this.windowProperties=windowProperties;
 	    		this.instancesSeen=instancesSeen;
 	    		this.classifiedInstances=classifiedInstances;
 	    }
@@ -1012,9 +878,16 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 	    public void reset() {
 	    		classifier.resetLearning();
 	    		classifier = null;
-	    		internalWindowProperties = null;
+	    		windowProperties = null;
+	    		index = -1;
 	    		classifiedInstances = instancesSeen = createdOn = -1;
 		}
+	    
+	    public Concept copy() {
+			return new Concept(this.index, this.classifier, 
+							  this.createdOn, this.classifiedInstances, this.instancesSeen, 
+							  this.windowProperties);
+	    }
 	    
 	    // Getters
 	
@@ -1049,5 +922,108 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 	    }
 	    
 	}
+    
+
+    // Window-related parameters for classifier internal comparisons during the warning window 
+    public class Window{
+    	
+	    	// Window properties
+	    	int windowSize;   
+	    	int windowDefaultSize;   
+	    	int windowIncrements;
+	    	int minWindowSize;
+	    	double decisionThreshold;
+	    	int windowResizePolicy;
+	    	boolean backgroundDynamicWindowsFlag;
+	    	boolean rememberWindowSize;	    	
+
+		public Window(int windowSize, int windowIncrements, int minWindowSize, 
+					  double decisionThreshold, boolean rememberWindowSize, 
+					  boolean backgroundDynamicWindowsFlag, int windowResizePolicy) {
+			this.windowSize=windowSize;
+			this.windowDefaultSize=windowSize; // the default size of a window could change overtime if there is window sizw inheritance enabled
+			this.windowIncrements=windowIncrements;
+			this.minWindowSize=minWindowSize;
+			this.decisionThreshold=decisionThreshold;
+			this.backgroundDynamicWindowsFlag=backgroundDynamicWindowsFlag;
+			this.windowResizePolicy=windowResizePolicy;
+			this.rememberWindowSize=rememberWindowSize;
+		}
+		
+		public Window copy() {
+			return new Window(this.windowSize, this.windowIncrements, this.minWindowSize, 
+					  this.decisionThreshold, this.rememberWindowSize, 
+					  this.backgroundDynamicWindowsFlag, this.windowResizePolicy) ;
+		}
+		
+		
+		public int getSize() {
+			return this.windowSize;
+		}
+
+		public void setSize(int windowSize) {
+			this.windowSize = windowSize;
+		}
+
+		public int getIncrements() {
+			return this.windowIncrements;
+		}
+
+		public void setIncrements(int windowIncrements) {
+			this.windowIncrements = windowIncrements;
+		}
+
+		public int getDefaultSize() {
+			return this.windowDefaultSize;
+		}
+
+		public void setDefaultSize(int windowDefaultSize) {
+			this.windowDefaultSize = windowDefaultSize;
+		}
+
+		
+		
+		public int getMinSize() {
+			return this.minWindowSize;
+		}
+
+		public void setMinSize(int minWindowSize) {
+			this.minWindowSize = minWindowSize;
+		}
+
+		public double getDecisionThreshold() {
+			return this.decisionThreshold;
+		}
+
+		public void setDecisionThreshold(double decisionThreshold) {
+			this.decisionThreshold = decisionThreshold;
+		}
+		
+		public boolean getRememberSizeFlag(){
+			return this.rememberWindowSize;
+		}
+		
+		public void setRememberSizeFlag(boolean flag){
+			this.rememberWindowSize=flag;
+		}
+		
+		public int getResizingPolicy() {
+			return this.windowResizePolicy;
+		}
+
+		public void setResizingPolicy(int value) {
+			this.windowResizePolicy = value;
+		}
+		
+		public boolean getDynamicWindowInOldModelsFlag() {
+			return this.backgroundDynamicWindowsFlag;
+		}
+
+		public void getDynamicWindowInOldModelsFlag(boolean flag) {
+			this.backgroundDynamicWindowsFlag = flag;
+		}
+		
+    }
+    
     
 }
