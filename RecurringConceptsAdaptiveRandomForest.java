@@ -427,7 +427,7 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
             
             this.classifier = instantiatedClassifier;
             this.evaluator = evaluatorInstantiated;
-            this.internalWindowEvaluator = internalEvaluator; // @suarezcetrulo
+            this.internalWindowEvaluator = internalEvaluator; // only used in bkg and retrieved old models
             
             this.useBkgLearner = useBkgLearner;
             this.useRecurringLearner = useRecurringLearner;
@@ -437,23 +437,20 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
             this.numberOfWarningsDetected = 0;
             this.isBackgroundLearner = isBackgroundLearner;
 
-	    		// ////////////////////////////////////////////////
-	    		// ADDED IN RCARF by @suarezcetrulo
-	    		// ////////////////////////////////////////////////
             // Window params
             this.windowProperties=windowProperties;
-            this.windowProperties.setWindowSize(((windowProperties.rememberWindowSize && this.internalWindowEvaluator != null) ? internalEvaluator.getWindowSize(): windowProperties.windowDefaultSize));
+            // If window size inheritance is enabled, get the previous model window size. Otherwise reset it to its defaultvalue.
+            this.windowProperties.setWindowSize(((windowProperties.rememberWindowSize) ? 
+            										windowProperties.getWindowSize(): windowProperties.windowDefaultSize)); //TODO: get window size from internalEvaluator?
                         
             // Recurring drifts
             this.isOldLearner = isOldLearner;
             this.recurringConceptDetected = false;
-            //this.oldModels = ConceptHistory.historyList;
+            this.historySnapshot = null;
             
-            // TODO: replace this below (receive last error from method)
-            this.lastError = this.errorBeforeWarning  = 100.0; // we assume that the error before the first execution when a DT is new is 100% (worst case)
-            
-	    		// ////////////////////////////////////////////////
-	    		// ////////////////////////////////////////////////
+            // Initialize error of the new active model in the current concepts. The error obtained in previous executions is not relevant anymore.
+            // This error is used for dynamic window resizing in the Dynamic Evaluator during the warning window. They'll have a real value by then.
+            this.lastError = this.errorBeforeWarning  = 50.0; 
 
             if(this.useDriftDetector) {
                 this.driftOption = driftOption;
@@ -478,58 +475,51 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
         }
 
         public void reset() {
-	    		// @suarezcetrulo
-	    		// ////////////////////////////////////////////////
-	    		// ADDED IN RCARF
-			// ////////////////////////////////////////////////
 			System.out.println("RESET IN MODEL #"+this.indexOriginal);
 			// 1 Compare DT results using Window method and pick the best one
 			if(this.useRecurringLearner && this.historySnapshot != null)  compareModels();
 			
-			// 2 Move to the best BKG Learner (pick in Drift step 1)	
+			// 2 Transition to the best bkg or retrieved old learner
         		if (this.recurringConceptDetected && this.bestRecurringLearner != null) { //&& this.useRecurringLearner (condition implicit in the others)
-	            System.out.println("RECURRING DRIFT RESET IN MODEL #"+this.indexOriginal+" TO MODEL #"+this.bestRecurringLearner.indexOriginal); //added by @suarezcetrulo       
-		        // Replaces a tmpConcept saved at the start of the warning window in the static ConceptHistory when a drift occurs.
+	            System.out.println("RECURRING DRIFT RESET IN MODEL #"+this.indexOriginal+" TO MODEL #"+this.bestRecurringLearner.indexOriginal);       
+
+	            // 3 Move copy of active model made before warning to Concept History
+	            ConceptHistory.historyList.put(tmpCopyOfModel.index, tmpCopyOfModel); // TODO. save a copy/clone
 	            
-	            // TODO:  ADD COPY ACTIVE MODEL TO CONCEPT HISTORY
-	            
-	            // TODO: update error? maybe not
-	            
+	            // 4 New active model is the best retrieved old model
                 this.classifier = this.bestRecurringLearner.classifier;
                 this.driftDetectionMethod = this.bestRecurringLearner.driftDetectionMethod;
                 this.warningDetectionMethod = this.bestRecurringLearner.warningDetectionMethod;
                 this.evaluator = this.bestRecurringLearner.evaluator;
                 this.createdOn = this.bestRecurringLearner.createdOn;
                 this.windowProperties=this.bestRecurringLearner.windowProperties;
-                this.bestRecurringLearner = null;
-                this.recurringConceptDetected = false;
-                this.bkgLearner = null;
-                this.internalWindowEvaluator = null; //this.bestRecurringLearner.bkgInternalWindowEvaluator;
-
-                //this.isOldLearner = false; this shouldnt be necessary
-        		} // ////////////////////////////////////////////////
+                
+                // 5 Clear remove background and old learners 
+                cleanWarningWindow ();
+        		} 
         		else if(this.useBkgLearner && this.bkgLearner != null) {  
-    	            System.out.println("DRIFT RESET IN MODEL #"+this.indexOriginal+" TO NEW MODEL #"+this.bkgLearner.indexOriginal); //added by @suarezcetrulo
-    		        // Replaces a tmpConcept saved at the start of the warning window in the static ConceptHistory when a drift occurs.  //added by @suarezcetrulo
-    	            // TODO  ADD COPY ACTIVE MODEL TO CONCEPT HISTORY  //added by @suarezcetrulo
+    	            System.out.println("DRIFT RESET IN MODEL #"+this.indexOriginal+" TO NEW MODEL #"+this.bkgLearner.indexOriginal); 
+    	            // 3 Move copy of active model made before warning to Concept History
+    	            ConceptHistory.historyList.put(tmpCopyOfModel.index, tmpCopyOfModel); // TODO. save a copy/clone
+    	            
+    	            // 4 New active model is the background model
                 this.classifier = this.bkgLearner.classifier;
                 this.driftDetectionMethod = this.bkgLearner.driftDetectionMethod;
                 this.warningDetectionMethod = this.bkgLearner.warningDetectionMethod;
                 this.windowProperties=this.bkgLearner.windowProperties;
                 this.evaluator = this.bkgLearner.evaluator;
                 this.createdOn = this.bkgLearner.createdOn;
-                this.bestRecurringLearner = null;
-                this.recurringConceptDetected = false;
-                this.bkgLearner = null;
-                this.internalWindowEvaluator = null; // added by @suarezcetrulo
+                
+                // 5 Clear remove background and old learners 
+                cleanWarningWindow();
             }
-            else {
+            else { //TODO: is this the false alarm? or where is it?
                 this.classifier.resetLearning();
                 this.createdOn = instancesSeen;
                 this.driftDetectionMethod = ((ChangeDetector) getPreparedClassOption(this.driftOption)).copy();
             }
             this.evaluator.reset();
-    		// TODO: We also need to reset, clear and remove the BKG AND OLD Learners here
+    		    // TODO: We also need to reset, clear and remove the BKG AND OLD Learners here
 
         }
 
@@ -575,7 +565,22 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 		// ADDED IN RCARF by  @suarezcetrulo
 		// ////////////////////////////////////////////////
         
-        // Warning window
+        // Clean warning window (removes all learners)
+        public void cleanWarningWindow () {
+            // Reset concept history
+            historySnapshot.resetHistory();
+            historySnapshot = null;
+            
+            // Reset recurring concept
+            this.bestRecurringLearner = null; // only a double check. 
+            this.recurringConceptDetected = false; // only a double check.
+            
+            // Reset bkg evaluator
+            this.bkgLearner = null;
+            this.internalWindowEvaluator = null; // added by @suarezcetrulo
+        }
+        
+        // Starts Warning window
         public void startWarningWindow(long instancesSeen) {
             this.lastWarningOn = instancesSeen;
             this.numberOfWarningsDetected++;
@@ -600,6 +605,18 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
             this.warningDetectionMethod = ((ChangeDetector) getPreparedClassOption(this.warningOption)).copy();
         }
         
+        
+        // Saves a backup of the active model that raised a warning to be stored in the concept history in case of drift.
+        public void saveActiveModelOnWarning() {
+	    		this.tmpCopyOfModel.reset();
+	    		this.tmpCopyOfModel = new Concept(indexOriginal, (ARFHoeffdingTree) this.classifier.copy(), this.createdOn, 
+	    						(long) this.evaluator.getPerformanceMeasurements()[0].getValue(), instancesSeen, this.windowProperties);
+	    		// Add the model accumulated error (from the start of the model) from the iteration before the warning
+	    		this.tmpCopyOfModel.setErrorBeforeWarning(errorBeforeWarning);
+	    		// A simple concept to be stored in the concept history that doesn't have a running learner.
+	    		// This doesn't train. It keeps the model as it was at the beginning of the training window to be stored in case of drift.
+        }
+        
         // Creates BKG Model in warning window
         public void createBkgModel() {
             // Create a new bkgTree classifier
@@ -621,17 +638,6 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
             									   this.useBkgLearner, this.useDriftDetector, this.driftOption, 
             									   this.warningOption, true, this.useRecurringLearner, false, 
             									   this.windowProperties, bkgInternalWindowEvaluator); // added last inputs parameter by @suarezcetrulo        	
-        }
-        
-        // Saves a backup of the active model that raised a warning to be stored in the concept history in case of drift.
-        public void saveActiveModelOnWarning() {
-	    		this.tmpCopyOfModel.reset();
-	    		this.tmpCopyOfModel = new Concept(indexOriginal, (ARFHoeffdingTree) this.classifier.copy(), this.createdOn, 
-	    						(long) this.evaluator.getPerformanceMeasurements()[0].getValue(), instancesSeen, this.windowProperties);
-	    		// Add the model accumulated error (from the start of the model) from the iteration before the warning
-	    		this.tmpCopyOfModel.setErrorBeforeWarning(errorBeforeWarning);
-	    		// A simple concept to be stored in the concept history that doesn't have a running learner.
-	    		// This doesn't train. It keeps the model as it was at the beginning of the training window to be stored in case of drift.
         }
 
         public void retrieveOldModels() {
