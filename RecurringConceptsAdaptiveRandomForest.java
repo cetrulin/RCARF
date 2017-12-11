@@ -216,9 +216,8 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 	            		this.ensemble[i].bkgLearner.internalWindowEvaluator.addResult(example, vote.getArrayRef());
 	            // 3 If the concept history is ready and it contains old models, testing in each old model internal evaluator (to compare against bkg one)
 	            if(this.ensemble[i].historySnapshot != null && (this.ensemble[i].historySnapshot).getNumberOfConcepts() > 0) {
-		            	for (DynamicWindowClassificationPerformanceEvaluator conceptEvaluator : 
-		            		(this.ensemble[i].historySnapshot).getInternalEvaluators()) { 
-		            		conceptEvaluator.addResult(example, vote.getArrayRef()); // TODO: test this
+		            	for (ConceptLearner oldModel : (this.ensemble[i].historySnapshot).getConceptHistoryValues()) { // TODO: test this
+		            		oldModel.getBaseLearner().internalWindowEvaluator.addResult(example, vote.getArrayRef()); // TODO: test this
 		            	}
 	            }
             }
@@ -392,7 +391,7 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 		// ////////////////////////////////////////////////
         
         // Internal statistics
-        protected DynamicWindowClassificationPerformanceEvaluator internalWindowEvaluator; // only used in background and old classifiers
+        public DynamicWindowClassificationPerformanceEvaluator internalWindowEvaluator; // only used in background and old classifiers
         protected double lastError;
         protected double errorBeforeWarning;
         protected Window windowProperties;
@@ -793,11 +792,6 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 	    public int getNumberOfConcepts() {
 	    		return historyList.size();
 	    }
-				
-	    public Collection<DynamicWindowClassificationPerformanceEvaluator> getInternalEvaluators(){
-	    		return ((Collection <ConceptLearner>) this.historyList.values()).
-	    				
-	    }
 	    
         public void resetHistory(){
 	    		historyList.clear();
@@ -815,7 +809,8 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
     		protected long createdOn;
     		protected long classifiedInstances;
     		protected long instancesSeen;
-    		protected ARFBaseLearner conceptLearner;
+    		
+    		public ARFBaseLearner conceptLearner;
     		
    	    // Constructor
 	    public ConceptLearner(int index, ARFHoeffdingTree classifier, BasicClassificationPerformanceEvaluator conceptEvaluator,
