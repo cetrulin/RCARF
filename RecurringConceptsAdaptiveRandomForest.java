@@ -520,7 +520,7 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
                         startWarningWindow(instancesSeen);
                     } else {
                     		this.lastError = this.evaluator.getFractionIncorrectlyClassified(); // TODO: should this be in the same iteration of the warning? 
-                    		// TODO: should we also copy the current classifier in here? (to have the copy before raising a warning)
+                    		// TODO: should we also copy the current classifier in here? currently inside warning window
                     } /*********** ************* ***********/
                 } /*********** drift detection ***********/
                 // Update the DRIFT detection method
@@ -536,10 +536,6 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
             }
         }
 
-		// ////////////////////////////////////////////////
-		// ADDED IN RCARF by  @suarezcetrulo
-		// ////////////////////////////////////////////////
-        
         // Clean warning window (removes all learners)
         public void cleanWarningWindow () {
             // 1 Reset bkg evaluator
@@ -673,7 +669,6 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
                 }
             } return minKey;
         }
-        // ////////////////////////////////////////////////
  
         public double[] getVotesForInstance(Instance instance) {
             DoubleVector vote = new DoubleVector(this.classifier.getVotesForInstance(instance));
