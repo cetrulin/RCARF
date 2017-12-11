@@ -168,12 +168,12 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
          public void add(double value) {
         	 	
         	 	if(this.SizeWindow==-1) {
-            	 	System.out.println("AGREGADOR VENTANA ESTATICA --> Adding result: "+value+"  window size was:"+this.SizeWindow);
+            	 	// System.out.println("Static Window --> Adding result: "+value+" - window size was: "+this.SizeWindow);
                 sum += value;
                 len++;
         	 		
         	 	} else {
-            	 	System.out.println("AGREGADOR VENTANA DINAMICA --> Adding result: "+value+"  window size was:"+this.SizeWindow);
+            	 	// System.out.println("Dynamic Window --> Adding result: "+value+" - window size was:"+this.SizeWindow);
 
 	        	 	// Always storing extra results just in case we increment the window size
 	  			this.window.add(value);
@@ -204,7 +204,8 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
          // As we store the plus last INCREMENT_SIZE errors, we need to start from the position INCREMENT_SIZE-1 (zero indexed)
          // Size of the sublist is WINDOW_SIZE 
          public double estimation(){ // = getLastWindowEstimation
-        	 		System.out.println("In Estimator #"+this.estimatorID+"windowSize is "+SizeWindow+" so prediction is :"+(sum/len));
+        	 		System.out.println("In Estimator #"+this.estimatorID+"  WindowSize is "+SizeWindow+" so prediction is :"+(estimateError(this.window.subList((this.window.size()-(this.sizeIncrements-1)), 
+        	 				this.window.size() < this.SizeWindow ? this.window.size() : this.SizeWindow))));
         	 		if (SizeWindow==-1) return sum/len;
         	 		else return estimateError(this.window.subList((this.window.size()-(this.sizeIncrements-1)), 
         	 				this.window.size() < this.SizeWindow ? this.window.size() : this.SizeWindow)); 

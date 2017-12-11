@@ -211,7 +211,7 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
             InstanceExample example = new InstanceExample(instance);
             // 1 Testing in active model
             this.ensemble[i].evaluator.addResult(example, vote.getArrayRef());
-            
+
             if(!disableRecurringDriftDetectionOption.isSet()) {
 	            // 2 If the warning window is open, testing in background model internal evaluator (for comparison purposes) 
 	            if(this.ensemble[i].bkgLearner != null && this.ensemble[i].bkgLearner.internalWindowEvaluator!=null) 
@@ -473,8 +473,9 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
     	            tmpCopyOfModel = null;
     	            
 	            // 3 Pick new active model (the best one selected in step 1)
-	            if(this.recurringConceptDetected && this.bestRecurringLearner != null) newActiveModel = this.bestRecurringLearner; // System.out.println("RECURRING DRIFT RESET IN MODEL #"+this.indexOriginal+" TO MODEL #"+this.bestRecurringLearner.indexOriginal);   
-	            else if(this.useBkgLearner && this.bkgLearner != null) newActiveModel = this.bkgLearner; // System.out.println("DRIFT RESET IN MODEL #"+this.indexOriginal+" TO NEW MODEL #"+this.bkgLearner.indexOriginal); 
+	            if(this.recurringConceptDetected && this.bestRecurringLearner != null) 
+	            	newActiveModel = this.bestRecurringLearner; 
+	            else if(this.useBkgLearner && this.bkgLearner != null) newActiveModel = this.bkgLearner; 
 	            
                 // 4 Update window size in window properties depending on window size inheritance flag (entry parameter/Option)
                 newActiveModel.windowProperties.setSize(((newActiveModel.windowProperties.rememberWindowSize) ? 
@@ -484,12 +485,13 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
                 this.windowProperties=newActiveModel.windowProperties;
                 this.classifier = newActiveModel.classifier;
                 this.driftDetectionMethod = newActiveModel.driftDetectionMethod;
-                this.warningDetectionMethod = newActiveModel.warningDetectionMethod;
+                this.warningDetectionMethod = newActiveModel.warningDetectionMethod;                
                 this.evaluator = newActiveModel.evaluator;
                 this.createdOn = newActiveModel.createdOn;
                 
                 // 6 Clear remove background and old learners 
                 resetWarningWindow ();
+
         		} 
             else { 
                 this.classifier.resetLearning();
@@ -517,7 +519,8 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
                     // Update the WARNING detection method
                     this.warningDetectionMethod.input(correctlyClassifies ? 0 : 1);
                     // Check if there was a change – @suarezcetrulo: assumption -> in case of false alarm this triggers warning again and the bkglearner gets replaced
-                    if(this.warningDetectionMethod.getChange()) { 
+                    // if(this.warningDetectionMethod !=null? this.warningDetectionMethod.getChange(): false) { 
+                    if(this.warningDetectionMethod.getChange()) {
                         this.lastWarningOn = instancesSeen;
                         this.numberOfWarningsDetected++;
                         
@@ -528,7 +531,7 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 	                	   // 2 Start warning window to create bkg learner and retrieve old models (if option enabled)
                         startWarningWindow();
                     }
-                    
+
                 } /*********** drift detection ***********/
                 // Update the DRIFT detection method
                 this.driftDetectionMethod.input(correctlyClassifies ? 0 : 1);
@@ -536,15 +539,16 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
                 if(this.driftDetectionMethod.getChange()) {
                     this.lastDriftOn = instancesSeen;
                     this.numberOfDriftsDetected++;
-                    
+
 	        		   // 1 Compare DT results using Window method and pick the best one. Only if there is any old concept. Otherwise the selected model is the bkg one
-	        		   if(this.useRecurringLearner && this.historySnapshot != null && historySnapshot.getNumberOfConcepts() > 0)  selectNewActiveModel();
-	        		   // else this.recurringConceptDetected=false; // only a double check
+	        		   if(this.useRecurringLearner && this.historySnapshot != null && historySnapshot.getNumberOfConcepts() > 0)  {
+	        			   selectNewActiveModel();
+	        		   } // else this.recurringConceptDetected=false; // only a double check
 	        		   // 2 Transition to new model
                     this.reset();
                 } 
-            }
-        }
+            } 
+        } 
         
         // Saves a backup of the active model that raised a warning to be stored in the concept history in case of drift.
         public void updateBeforeWarning() {  
@@ -576,10 +580,11 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
             		// updateBeforeWarning(); // This is done before the warning window, in the method TrainOnInstance
     				// 2 Create concept learners of the old classifiers to compare against the bkg model
     				retrieveOldModels(); 	
-            } System.out.println("WARNING ACTIVE IN MODEL #"+this.indexOriginal+"with background model running #"+bkgLearner.indexOriginal);
+            } 
             // Update the warning detection object for the current object 
             // (this effectively resets changes made to the object while it was still a bkg learner). 
             this.warningDetectionMethod = ((ChangeDetector) getPreparedClassOption(this.warningOption)).copy();
+            
         }
         
         // Clean warning window (removes all learners)
@@ -647,7 +652,7 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
         			// It sends a copy of the active evaluator only for reference, as it's only used at the end if the active model transitions to the given concept.
         			historySnapshot.pushConceptLearner(new ConceptLearner(auxConcept.getEnsembleIndex(), auxConcept.getModel(), auxConceptEvaluator, 
     					auxConcept.getNumberOfInstancesProcessedByCreation(), auxConcept.getNumberOfInstancesClassified(), auxConcept.getNumberOfInstancesSeen(), 
-    					auxConcept.windowProperties, auxConceptInternalWindow, this.useDriftDetector, this.driftOption, this.warningOption, this.useRecurringLearner, 
+    					auxConcept.windowProperties, auxConceptInternalWindow, this.useBkgLearner, this.useDriftDetector, this.driftOption, this.warningOption, this.useRecurringLearner, //TODO: also save this in concept?
     					true, auxConceptHistoryIndex)); // second last param true as this refers to old models
         		}
         }
@@ -670,18 +675,29 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 		        		this.recurringConceptDetected=true;
 		        		System.out.println(snapshotRanking.size()); // TODO: debugging
 		        		System.out.println(getMinKey(snapshotRanking)); // TODO: debugging
+		        		
 		        		this.bestRecurringLearner=historySnapshot.getConceptLearner(getMinKey(snapshotRanking));
-		    		} else this.recurringConceptDetected=false;
-	    		}
+		        		System.out.println("best recurring learner warning flag es: "+bestRecurringLearner.warningDetectionMethod);
+		    		} else this.recurringConceptDetected = false;
+	    		} else this.recurringConceptDetected = false;
+	    		
+ 			System.out.println("recConcept flag in pos "+this.indexOriginal+" is "+this.recurringConceptDetected);
+
         }
         
         // Aux method for getting the best classifier in a hashMap of (int modelIndex, double averageErrorInWindow) 
         private Integer getMinKey(Map<Integer, Double> map, Integer... keys) {
         	    Integer minKey = null;
+        	    
+        	    System.out.println("map is: "+map);
+        	    System.out.println("number of keys is: "+map.keySet().size()); // TODO: looks like fixed now...
+        	    
             double minValue = Double.MAX_VALUE;
-            for(Integer key : keys) {
+            for(Integer key : map.keySet()) {
+            		System.out.println("key is:"+key);
                 double value = map.get(key);
                 if(value < minValue) {
+                	System.out.println("min error is: "+ value+" with key: "+key);
                     minValue = value;
                     minKey = key;
                 }
@@ -830,12 +846,12 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
     		
     		// Learner
     		public RCARFBaseLearner conceptLearner;
-    		
-   	    // Constructor
+
+    		// Constructor
 	    public ConceptLearner(int ensembleIndex, ARFHoeffdingTree classifier, BasicClassificationPerformanceEvaluator conceptEvaluator,
 	    						long createdOn, long classifiedInstances, long instancesSeen,
 	    						Window windowProperties, DynamicWindowClassificationPerformanceEvaluator internalConceptEvaluator, 
-	    						boolean useDriftDetector, ClassOption driftOption, ClassOption warningOption, 
+	    						boolean useBkgLearner, boolean useDriftDetector, ClassOption driftOption, ClassOption warningOption, 
 	    						boolean useRecurringLearner, boolean isOldModel, int historyIndex){
 	    	
 	    		this.ensembleIndex=ensembleIndex;
@@ -846,7 +862,8 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 	    		
 	    		// Create concept learner
 			this.conceptLearner = new RCARFBaseLearner(ensembleIndex, classifier, conceptEvaluator, instancesSeen, 
-                    false, useDriftDetector, driftOption, warningOption, true, useRecurringLearner, isOldModel, windowProperties, internalConceptEvaluator);
+				   useBkgLearner, useDriftDetector, driftOption, warningOption, true, useRecurringLearner, isOldModel, 
+                    windowProperties, internalConceptEvaluator);
 	    }
 	    
 	    public int getEnsembleIndex() {
