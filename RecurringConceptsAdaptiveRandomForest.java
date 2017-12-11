@@ -516,8 +516,10 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
                     // Update the WARNING detection method
                     this.warningDetectionMethod.input(correctlyClassifies ? 0 : 1);
                     // Check if there was a change 
-                    if(this.warningDetectionMethod.getChange()) {                			                        
-                        startWarningWindow(instancesSeen);
+                    if(this.warningDetectionMethod.getChange()) { 
+                        this.lastWarningOn = instancesSeen;
+                        this.numberOfWarningsDetected++;
+                        startWarningWindow();
                     } else {
                     		this.lastError = this.evaluator.getFractionIncorrectlyClassified(); // TODO: should this be in the same iteration of the warning? 
                     		// TODO: should we also copy the current classifier in here? currently inside warning window
@@ -552,21 +554,19 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
         }
         
         // Starts Warning window
-        public void startWarningWindow(long instancesSeen) {
-            this.lastWarningOn = instancesSeen;
-            this.numberOfWarningsDetected++;
+        public void startWarningWindow() {
         	
         		// 1 Save error before warning
             this.errorBeforeWarning = this.lastError;
 
             // 2 Create background Model
-            createBkgModel(instancesSeen);
+            createBkgModel();
 
             // If we search explicitly for recurring concepts (parameter activated), then we need to deal with a concept history.
             // Therefore, we need to start the warning window and save a copy of the current classifier to be saved in the history in case of drift.
             if(this.useRecurringLearner) {
     				// 3 Temporally copy the current classifier in a concept object (it still will be in use until the Drift is confirmed). 
-            		saveActiveModelOnWarning(instancesSeen);
+            		saveActiveModelOnWarning();
     				// 4 Create concept learners of the old classifiers to compare against the bkg model
     				retrieveOldModels(); 	
             } System.out.println("WARNING ACTIVE IN MODEL #"+this.indexOriginal+"with background model running #"+bkgLearner.indexOriginal);
@@ -577,11 +577,11 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
         
         
         // Saves a backup of the active model that raised a warning to be stored in the concept history in case of drift.
-        public void saveActiveModelOnWarning(long instancesSeen) {
+        public void saveActiveModelOnWarning() {
         		// 1 Delete previous copy (if any)
 	    		this.tmpCopyOfModel.reset();	    		
 	    		this.tmpCopyOfModel = new Concept(indexOriginal, (ARFHoeffdingTree) this.classifier.copy(), this.createdOn, 
-	    						(long) this.evaluator.getPerformanceMeasurements()[0].getValue(), instancesSeen, this.windowProperties.copy());
+	    						(long) this.evaluator.getPerformanceMeasurements()[0].getValue(), this.lastWarningOn, this.windowProperties.copy());
 	    		// 2 Add the model accumulated error (from the start of the model) from the iteration before the warning
 	    		this.tmpCopyOfModel.setErrorBeforeWarning(this.errorBeforeWarning);
 	    		// A simple concept to be stored in the concept history that doesn't have a running learner.
@@ -589,7 +589,7 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
         }
         
         // Creates BKG Model in warning window
-        public void createBkgModel(long instancesSeen) {
+        public void createBkgModel() {
             // 1 Create a new bkgTree classifier
             ARFHoeffdingTree bkgClassifier = (ARFHoeffdingTree) this.classifier.copy();
             bkgClassifier.resetLearning();
@@ -605,7 +605,7 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
             bkgInternalWindowEvaluator.reset();
             
             // 4 Create a new bkgLearner object (TODO: IF I SEE REPEATED INDEXES IT MAY BE DUE TO THIS, IT'S SENDING THE SAME INDEX. WE'D HAVE TO CREATE A NEW ONE -  MAYBE USING AN STATIC PARAM IN THE CONCEPT HISTORY(?) - SEE HOW'S DONE THIS IN THE ENSEMBLE)
-            this.bkgLearner = new RCARFBaseLearner(indexOriginal, bkgClassifier, bkgEvaluator, instancesSeen, 
+            this.bkgLearner = new RCARFBaseLearner(indexOriginal, bkgClassifier, bkgEvaluator, this.lastWarningOn, 
             		this.useBkgLearner, this.useDriftDetector, this.driftOption, this.warningOption, true, this.useRecurringLearner, false, 
             									   this.windowProperties, bkgInternalWindowEvaluator); // added last inputs parameter by @suarezcetrulo        	
         }
