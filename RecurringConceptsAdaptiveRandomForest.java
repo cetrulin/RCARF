@@ -217,7 +217,7 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 	            // 3 If the concept history is ready and it contains old models, testing in each old model internal evaluator (to compare against bkg one)
 	            if(this.ensemble[i].historySnapshot != null && (this.ensemble[i].historySnapshot).getNumberOfConcepts() > 0) {
 		            	for (ConceptLearner oldModel : (this.ensemble[i].historySnapshot).getConceptHistoryValues()) { // TODO: test this
-		            		oldModel.getBaseLearner().internalWindowEvaluator.addResult(example, vote.getArrayRef()); // TODO: test this
+		            		oldModel.conceptLearner.internalWindowEvaluator.addResult(example, vote.getArrayRef()); // TODO: test this
 		            	}
 	            }
             }
@@ -401,7 +401,7 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
         // Internal statistics
         public DynamicWindowClassificationPerformanceEvaluator internalWindowEvaluator; // only used in background and old classifiers
         protected double lastError;
-        protected double errorBeforeWarning;
+        // protected double errorBeforeWarning; -- no longer needed
         protected Window windowProperties;
 
         
@@ -435,7 +435,8 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
             
             // Initialize error of the new active model in the current concepts. The error obtained in previous executions is not relevant anymore.
             // This error is used for dynamic window resizing in the Dynamic Evaluator during the warning window. They'll have a real value by then.
-            this.lastError = this.errorBeforeWarning  = 50.0; 
+            this.lastError = 50.0; 
+            //this.errorBeforeWarning = 50.0; -- no longer needed
 
             if(this.useDriftDetector) {
                 this.driftOption = driftOption;
@@ -521,8 +522,8 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
                         this.numberOfWarningsDetected++;
                         startWarningWindow();
                     } else {
-                    		this.lastError = this.evaluator.getFractionIncorrectlyClassified(); // TODO: should this be in the same iteration of the warning? 
-                    		// TODO: should we also copy the current classifier in here? currently inside warning window
+        					//  Update last error and make a backup of the current classifier in a concept object (the active one will be in use until the Drift is confirmed). 
+                    		if(this.useRecurringLearner) updateBeforeWarning();
                     } /*********** ************* ***********/
                 } /*********** drift detection ***********/
                 // Update the DRIFT detection method
@@ -537,6 +538,23 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
                 // Need to understand what happens with false Alarms
             }
         }
+        
+        // Saves a backup of the active model that raised a warning to be stored in the concept history in case of drift.
+        public void updateBeforeWarning() {  
+        		// 1 Update last error before warning of the active classifier
+        		// This error is the total fraction of examples incorrectly classified since this model was active until now.
+    			this.lastError = this.evaluator.getFractionIncorrectlyClassified();  
+
+        		// 2 Delete previous copy (if any)
+	    		this.tmpCopyOfModel.reset();	    		
+	    		this.tmpCopyOfModel = new Concept(indexOriginal, (ARFHoeffdingTree) this.classifier.copy(), this.createdOn, 
+	    						(long) this.evaluator.getPerformanceMeasurements()[0].getValue(), this.lastWarningOn, this.windowProperties.copy());
+	    		// 3 Add the model accumulated error (from the start of the model) from the iteration before the warning
+	    		this.tmpCopyOfModel.setErrorBeforeWarning(this.lastError);
+	    		// A simple concept to be stored in the concept history that doesn't have a running learner.
+	    		// This doesn't train. It keeps the model as it was at the beginning of the training window to be stored in case of drift.
+        }
+        
 
         // Clean warning window (removes all learners)
         public void cleanWarningWindow () {
@@ -553,39 +571,25 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
             this.historySnapshot = null;
         }
         
+        
         // Starts Warning window
         public void startWarningWindow() {
-        	
-        		// 1 Save error before warning
-            this.errorBeforeWarning = this.lastError;
+        		// 0 Save error before warning - not necessary as it's done before entering here, in updateBeforeWarning
+            // this.errorBeforeWarning = this.lastError;
 
-            // 2 Create background Model
+            // 1 Create background Model
             createBkgModel();
 
             // If we search explicitly for recurring concepts (parameter activated), then we need to deal with a concept history.
             // Therefore, we need to start the warning window and save a copy of the current classifier to be saved in the history in case of drift.
             if(this.useRecurringLearner) {
-    				// 3 Temporally copy the current classifier in a concept object (it still will be in use until the Drift is confirmed). 
-            		saveActiveModelOnWarning();
-    				// 4 Create concept learners of the old classifiers to compare against the bkg model
+            		// updateBeforeWarning(); // This is done before the warning window, in the method TrainOnInstance
+    				// 2 Create concept learners of the old classifiers to compare against the bkg model
     				retrieveOldModels(); 	
             } System.out.println("WARNING ACTIVE IN MODEL #"+this.indexOriginal+"with background model running #"+bkgLearner.indexOriginal);
             // Update the warning detection object for the current object 
             // (this effectively resets changes made to the object while it was still a bkg learner). 
             this.warningDetectionMethod = ((ChangeDetector) getPreparedClassOption(this.warningOption)).copy();
-        }
-        
-        
-        // Saves a backup of the active model that raised a warning to be stored in the concept history in case of drift.
-        public void saveActiveModelOnWarning() {
-        		// 1 Delete previous copy (if any)
-	    		this.tmpCopyOfModel.reset();	    		
-	    		this.tmpCopyOfModel = new Concept(indexOriginal, (ARFHoeffdingTree) this.classifier.copy(), this.createdOn, 
-	    						(long) this.evaluator.getPerformanceMeasurements()[0].getValue(), this.lastWarningOn, this.windowProperties.copy());
-	    		// 2 Add the model accumulated error (from the start of the model) from the iteration before the warning
-	    		this.tmpCopyOfModel.setErrorBeforeWarning(this.errorBeforeWarning);
-	    		// A simple concept to be stored in the concept history that doesn't have a running learner.
-	    		// This doesn't train. It keeps the model as it was at the beginning of the training window to be stored in case of drift.
         }
         
         // Creates BKG Model in warning window
@@ -599,11 +603,14 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
             bkgEvaluator.reset();
             
             // 3 Adding also internal evaluator (window) in bkgEvaluator (by @suarezcetrulo)
-            DynamicWindowClassificationPerformanceEvaluator bkgInternalWindowEvaluator = new DynamicWindowClassificationPerformanceEvaluator (
-            		this.windowProperties.getSize(),this.windowProperties.getIncrements(),this.windowProperties.getMinSize(),
-            		this.lastError,this.windowProperties.getDecisionThreshold(),true,this.windowProperties.getResizingPolicy());  
-            bkgInternalWindowEvaluator.reset();
-            
+            DynamicWindowClassificationPerformanceEvaluator bkgInternalWindowEvaluator = null;
+            if(this.useRecurringLearner) {
+                bkgInternalWindowEvaluator = new DynamicWindowClassificationPerformanceEvaluator (
+                		this.windowProperties.getSize(),this.windowProperties.getIncrements(),this.windowProperties.getMinSize(),
+                		this.lastError,this.windowProperties.getDecisionThreshold(),true,this.windowProperties.getResizingPolicy());  
+                bkgInternalWindowEvaluator.reset();	
+            }
+                        
             // 4 Create a new bkgLearner object (TODO: IF I SEE REPEATED INDEXES IT MAY BE DUE TO THIS, IT'S SENDING THE SAME INDEX. WE'D HAVE TO CREATE A NEW ONE -  MAYBE USING AN STATIC PARAM IN THE CONCEPT HISTORY(?) - SEE HOW'S DONE THIS IN THE ENSEMBLE)
             this.bkgLearner = new RCARFBaseLearner(indexOriginal, bkgClassifier, bkgEvaluator, this.lastWarningOn, 
             		this.useBkgLearner, this.useDriftDetector, this.driftOption, this.warningOption, true, this.useRecurringLearner, false, 
@@ -628,32 +635,27 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 	        			auxConcept.windowProperties.getDynamicWindowInOldModelsFlag(), auxConcept.windowProperties.getResizingPolicy());  	
         			auxConceptInternalWindow.reset();        			
         			
-            		// Creates a Concept Learner for each historic concept
+            		// 4 Creates a Concept Learner for each historic concept
         			// It sends a copy of the active evaluator only for reference, as it's only used at the end if the active model transitions to the given concept.
         			historySnapshot.pushConceptLearner(new ConceptLearner(auxConcept.getIndex(), auxConcept.getModel(), auxConceptEvaluator, 
     					auxConcept.getNumberOfInstancesProcessedByCreation(), auxConcept.getNumberOfInstancesClassified(), auxConcept.getNumberOfInstancesSeen(), 
     					auxConcept.windowProperties, auxConceptInternalWindow, this.useDriftDetector, this.driftOption, this.warningOption, this.useRecurringLearner, true)); // last param true as this refers to old models
         		}
- 			
-        		// Dynamic Window for Background model, it starts with the default size.
-            this.bkgLearner.internalWindowEvaluator = null;    // .clear(); 
-            this.bkgLearner.internalWindowEvaluator = this.internalWindowEvaluator; 
-            // it was: new Window(ConceptHistory.defaultWindow, ConceptHistory.windowIncrements, ConceptHistory.minWindowSize, ConceptHistory.decisionThreshold);
         }
                 
         // Rank of concept history windows and make decision against bkg model
         public void compareModels() {
-        		HashMap<Integer, Double> ranking = new HashMap<Integer, Double>();
+        		HashMap<Integer, Double> snapshotRanking = new HashMap<Integer, Double>();
          
         		// 1 - Add old models
 	    		for (ConceptLearner auxConcept : historySnapshot.getConceptHistoryValues()) {
 	    			// Check that the concept still is in the concept history and available to be selected. If so, it adds its result to the ranking
-	    			if(ConceptHistory.historyList.containsKey(auxConcept.getIndex())) ranking.put(auxConcept.getIndex(), auxConcept.conceptLearner.internalWindowEvaluator.getFractionIncorrectlyClassified());
+	    			if(ConceptHistory.historyList.containsKey(auxConcept.getIndex())) snapshotRanking.put(auxConcept.getIndex(), auxConcept.conceptLearner.internalWindowEvaluator.getFractionIncorrectlyClassified());
 	    		}
 	    		// 2 Compare this against the background model 
-	    		if(Collections.min(ranking.values())>=bkgLearner.internalWindowEvaluator.getFractionIncorrectlyClassified()){
+	    		if(Collections.min(snapshotRanking.values())<=bkgLearner.internalWindowEvaluator.getFractionIncorrectlyClassified()){
 	        		this.recurringConceptDetected=true;
-	        		this.bestRecurringLearner=historySnapshot.getConceptLearner(getMinKey(ranking));
+	        		this.bestRecurringLearner=historySnapshot.getConceptLearner(getMinKey(snapshotRanking));
 	    		} else this.recurringConceptDetected=false;
         }
         
