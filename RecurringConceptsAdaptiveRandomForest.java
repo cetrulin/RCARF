@@ -363,7 +363,7 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
         public long lastWarningOn;
         public ARFHoeffdingTree classifier;
         public boolean isBackgroundLearner;
-        public boolean isOldLearner;
+        public boolean isOldLearner; // only for reference
         
         // The drift and warning object parameters. 
         protected ClassOption driftOption;
@@ -401,7 +401,6 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
         // Internal statistics
         public DynamicWindowClassificationPerformanceEvaluator internalWindowEvaluator; // only used in background and old classifiers
         protected double lastError;
-        // protected double errorBeforeWarning; -- no longer needed
         protected Window windowProperties;
 
         
@@ -436,7 +435,6 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
             // Initialize error of the new active model in the current concepts. The error obtained in previous executions is not relevant anymore.
             // This error is used for dynamic window resizing in the Dynamic Evaluator during the warning window. They'll have a real value by then.
             this.lastError = 50.0; 
-            //this.errorBeforeWarning = 50.0; -- no longer needed
 
             if(this.useDriftDetector) {
                 this.driftOption = driftOption;
@@ -462,25 +460,24 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 
         public void reset() {
 			System.out.println("RESET IN MODEL #"+this.indexOriginal);
-			// 1 Compare DT results using Window method and pick the best one
-			if(this.useRecurringLearner && this.historySnapshot != null)  compareModels();
-						
-			// 2 Transition to the best bkg or retrieved old learner
+			// 1 Transition to the best bkg or retrieved old learner
         		if ((this.recurringConceptDetected && this.bestRecurringLearner != null) || (this.useBkgLearner && this.bkgLearner != null)) { //&& this.useRecurringLearner (condition implicit in the others)
         			RCARFBaseLearner newActiveModel = null;
         			
-    	            // 3 Move copy of active model made before warning to Concept History
+    	            // 2 Move copy of active model made before warning to Concept History. Clean the copy afterwards.
     	            ConceptHistory.historyList.put(tmpCopyOfModel.index, tmpCopyOfModel.copy());
+    	            tmpCopyOfModel.reset();
+    	            tmpCopyOfModel = null;
     	            
-	            // 4 Pick new active model (the best one selected in step 1)
+	            // 3 Pick new active model (the best one selected in step 1)
 	            if(this.recurringConceptDetected && this.bestRecurringLearner != null) newActiveModel = this.bestRecurringLearner; // System.out.println("RECURRING DRIFT RESET IN MODEL #"+this.indexOriginal+" TO MODEL #"+this.bestRecurringLearner.indexOriginal);   
 	            else if(this.useBkgLearner && this.bkgLearner != null) newActiveModel = this.bkgLearner; // System.out.println("DRIFT RESET IN MODEL #"+this.indexOriginal+" TO NEW MODEL #"+this.bkgLearner.indexOriginal); 
 	            
-                // 5 Update window size in window properties depending on window size inheritance flag (entry parameter/Option)
+                // 4 Update window size in window properties depending on window size inheritance flag (entry parameter/Option)
                 newActiveModel.windowProperties.setSize(((newActiveModel.windowProperties.rememberWindowSize) ? 
                 		newActiveModel.internalWindowEvaluator.getWindowSize() : newActiveModel.windowProperties.windowDefaultSize)); 
 	            
-	            // 6 New active model is the best retrieved old model
+	            // 5 New active model is the best retrieved old model
                 this.windowProperties=newActiveModel.windowProperties;
                 this.classifier = newActiveModel.classifier;
                 this.driftDetectionMethod = newActiveModel.driftDetectionMethod;
@@ -488,23 +485,23 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
                 this.evaluator = newActiveModel.evaluator;
                 this.createdOn = newActiveModel.createdOn;
                 
-                // 7 Clear remove background and old learners 
-                cleanWarningWindow ();
+                // 6 Clear remove background and old learners 
+                resetWarningWindow ();
         		} 
-            else { //TODO: is this the false alarm? or where is it?
+            else { 
                 this.classifier.resetLearning();
                 this.createdOn = instancesSeen;
                 this.driftDetectionMethod = ((ChangeDetector) getPreparedClassOption(this.driftOption)).copy();
             }
-            this.evaluator.reset(); // TODO: if this is due to a false alarm, we should be doing cleanWarningWindow() here and adding this line inside
+            this.evaluator.reset();
         }
 
         public void trainOnInstance(Instance instance, double weight, long instancesSeen) {
             Instance weightedInstance = (Instance) instance.copy();
             weightedInstance.setWeight(instance.weight() * weight);
-            // Dont train this if its an old model (from concept history)
-            if (!this.isOldLearner) this.classifier.trainOnInstance(weightedInstance);
-            // Dont train bkg model if it doesnt exist
+            
+            // Training active models and background models (if they exist). Retrieved old models are not trained.
+            this.classifier.trainOnInstance(weightedInstance);            
             if(this.bkgLearner != null) this.bkgLearner.classifier.trainOnInstance(instance);
             
             // Should it use a drift detector? Also, is it a backgroundLearner? If so, then do not "incept" another one. 
@@ -512,19 +509,23 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
                 boolean correctlyClassifies = this.classifier.correctlyClassifies(instance);
 
                 // Check for warning only if useBkgLearner is active
-                if(this.useBkgLearner) {       
+                if(this.useBkgLearner) { 
                     /*********** warning detection ***********/
                     // Update the WARNING detection method
                     this.warningDetectionMethod.input(correctlyClassifies ? 0 : 1);
-                    // Check if there was a change 
+                    // Check if there was a change – @suarezcetrulo: assumption -> in case of false alarm this triggers warning again and the bkglearner gets replaced
                     if(this.warningDetectionMethod.getChange()) { 
                         this.lastWarningOn = instancesSeen;
                         this.numberOfWarningsDetected++;
+                        
+	    				   // 1 Update last error and make a backup of the current classifier in a concept object (the active one will be in use until the Drift is confirmed). 
+                        // As there is no false alarms explicit mechanism (bkgLeaners keep running till replaced), this has been moved here.
+                        if(this.useRecurringLearner) updateBeforeWarning();
+	                	   
+	                	   // 2 Start warning window to create bkg learner and retrieve old models (if option enabled)
                         startWarningWindow();
-                    } else {
-        					//  Update last error and make a backup of the current classifier in a concept object (the active one will be in use until the Drift is confirmed). 
-                    		if(this.useRecurringLearner) updateBeforeWarning();
-                    } /*********** ************* ***********/
+                    }
+                    
                 } /*********** drift detection ***********/
                 // Update the DRIFT detection method
                 this.driftDetectionMethod.input(correctlyClassifies ? 0 : 1);
@@ -532,10 +533,13 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
                 if(this.driftDetectionMethod.getChange()) {
                     this.lastDriftOn = instancesSeen;
                     this.numberOfDriftsDetected++;
+                    
+	        		   // 1 Compare DT results using Window method and pick the best one
+	        		   if(this.useRecurringLearner && this.historySnapshot != null)  selectNewActiveModel();
+	        		   // else this.recurringConceptDetected=false; // only a double check
+	        		   // 2 Transition to new model
                     this.reset();
-                } /*********** ************* ***********/
-                // TODO. If its false alarm, we should set oldLearners and bgkLearners as NULL.
-                // Need to understand what happens with false Alarms
+                } 
             }
         }
         
@@ -554,28 +558,11 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 	    		// A simple concept to be stored in the concept history that doesn't have a running learner.
 	    		// This doesn't train. It keeps the model as it was at the beginning of the training window to be stored in case of drift.
         }
-        
-
-        // Clean warning window (removes all learners)
-        public void cleanWarningWindow () {
-            // 1 Reset bkg evaluator
-            this.bkgLearner = null;
-            this.internalWindowEvaluator = null; // only a double check, as it should be always null (only used in background + old concept Learners)
-            
-            // 2 Reset recurring concept
-            this.bestRecurringLearner = null; 
-            this.recurringConceptDetected = false; 
-            
-            // 3 Reset concept history
-            this.historySnapshot.resetHistory();
-            this.historySnapshot = null;
-        }
-        
-        
+                
         // Starts Warning window
         public void startWarningWindow() {
-        		// 0 Save error before warning - not necessary as it's done before entering here, in updateBeforeWarning
-            // this.errorBeforeWarning = this.lastError;
+        		// 0 Reset warning window
+        		resetWarningWindow ();
 
             // 1 Create background Model
             createBkgModel();
@@ -591,6 +578,22 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
             // (this effectively resets changes made to the object while it was still a bkg learner). 
             this.warningDetectionMethod = ((ChangeDetector) getPreparedClassOption(this.warningOption)).copy();
         }
+        
+        // Clean warning window (removes all learners)
+        public void resetWarningWindow () {
+            // 1 Reset bkg evaluator
+            this.bkgLearner = null;
+            this.internalWindowEvaluator = null; // only a double check, as it should be always null (only used in background + old concept Learners)
+            
+            // 2 Reset recurring concept
+            this.bestRecurringLearner = null; 
+            this.recurringConceptDetected = false; 
+            
+            // 3 Reset concept history
+            this.historySnapshot.resetHistory();
+            this.historySnapshot = null;
+        }
+        
         
         // Creates BKG Model in warning window
         public void createBkgModel() {
@@ -644,7 +647,7 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
         }
                 
         // Rank of concept history windows and make decision against bkg model
-        public void compareModels() {
+        public void selectNewActiveModel() {
         		HashMap<Integer, Double> snapshotRanking = new HashMap<Integer, Double>();
          
         		// 1 - Add old models
