@@ -537,8 +537,8 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
                     this.lastDriftOn = instancesSeen;
                     this.numberOfDriftsDetected++;
                     
-	        		   // 1 Compare DT results using Window method and pick the best one
-	        		   if(this.useRecurringLearner && this.historySnapshot != null)  selectNewActiveModel();
+	        		   // 1 Compare DT results using Window method and pick the best one. Only if there is any old concept. Otherwise the selected model is the bkg one
+	        		   if(this.useRecurringLearner && this.historySnapshot != null && historySnapshot.getNumberOfConcepts() > 0)  selectNewActiveModel();
 	        		   // else this.recurringConceptDetected=false; // only a double check
 	        		   // 2 Transition to new model
                     this.reset();
@@ -553,7 +553,7 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
     			this.lastError = this.evaluator.getFractionIncorrectlyClassified();  
 
         		// 2 Delete previous copy (if any)
-	    		this.tmpCopyOfModel.reset();	    		
+    			//this.tmpCopyOfModel.reset(); -> creates java.lang.NullPointerException	
 	    		this.tmpCopyOfModel = new Concept(indexOriginal, (ARFHoeffdingTree) this.classifier.copy(), this.createdOn, 
 	    						(long) this.evaluator.getPerformanceMeasurements()[0].getValue(), this.lastWarningOn, this.windowProperties.copy());
 	    		// 3 Add the model accumulated error (from the start of the model) from the iteration before the warning
@@ -593,7 +593,7 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
             this.recurringConceptDetected = false; 
             
             // 3 Reset concept history
-            this.historySnapshot.resetHistory();
+            // this.historySnapshot.resetHistory(); -> creates java.lang.NullPointerException
             this.historySnapshot = null;
         }
         
@@ -655,7 +655,7 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
         // Rank of concept history windows and make decision against bkg model
         public void selectNewActiveModel() {
         		HashMap<Integer, Double> snapshotRanking = new HashMap<Integer, Double>();
-         
+
         		// 1 - Add old models
 	    		for (ConceptLearner auxConcept : historySnapshot.getConceptHistoryValues()) {
 	    			// Check that the concept still is in the concept history and available to be selected. If so, it adds its result to the ranking
@@ -663,11 +663,16 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 	    				snapshotRanking.put(auxConcept.getHistoryIndex(), 
 	    						auxConcept.conceptLearner.internalWindowEvaluator.getFractionIncorrectlyClassified());
 	    		}
-	    		// 2 Compare this against the background model 
-	    		if(Collections.min(snapshotRanking.values())<=bkgLearner.internalWindowEvaluator.getFractionIncorrectlyClassified()){
-	        		this.recurringConceptDetected=true;
-	        		this.bestRecurringLearner=historySnapshot.getConceptLearner(getMinKey(snapshotRanking));
-	    		} else this.recurringConceptDetected=false;
+	    		// If there are no available choices, the new active model will be the background one
+	    		if(snapshotRanking.size()>0) {
+		    		// 2 Compare this against the background model 
+		    		if(Collections.min(snapshotRanking.values())<=bkgLearner.internalWindowEvaluator.getFractionIncorrectlyClassified()){
+		        		this.recurringConceptDetected=true;
+		        		System.out.println(snapshotRanking.size()); // TODO: debugging
+		        		System.out.println(getMinKey(snapshotRanking)); // TODO: debugging
+		        		this.bestRecurringLearner=historySnapshot.getConceptLearner(getMinKey(snapshotRanking));
+		    		} else this.recurringConceptDetected=false;
+	    		}
         }
         
         // Aux method for getting the best classifier in a hashMap of (int modelIndex, double averageErrorInWindow) 
