@@ -170,7 +170,7 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
     
     protected static final int SINGLE_THREAD = 0;
 	
-    protected ARFBaseLearner[] ensemble;
+    protected RCARFBaseLearner[] ensemble;
     protected long instancesSeen;
     protected int subspaceSize;
     protected BasicClassificationPerformanceEvaluator evaluator;
@@ -285,7 +285,7 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
     	
         // Init the ensemble.
         int ensembleSize = this.ensembleSizeOption.getValue();
-        this.ensemble = new ARFBaseLearner[ensembleSize];
+        this.ensemble = new RCARFBaseLearner[ensembleSize];
         
         // TODO: this should be an option with default = BasicClassificationPerformanceEvaluator
 //      BasicClassificationPerformanceEvaluator classificationEvaluator = (BasicClassificationPerformanceEvaluator) getPreparedClassOption(this.evaluatorOption);
@@ -333,7 +333,7 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
         
         for(int i = 0 ; i < ensembleSize ; ++i) {
             treeLearner.subspaceSizeOption.setValue(this.subspaceSize);
-            this.ensemble[i] = new ARFBaseLearner(
+            this.ensemble[i] = new RCARFBaseLearner(
                 i, 
                 (ARFHoeffdingTree) treeLearner.copy(), 
                 (BasicClassificationPerformanceEvaluator) classificationEvaluator.copy(), 
@@ -344,7 +344,7 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
                 warningDetectionMethodOption,
                 false,
                 ! this.disableRecurringDriftDetectionOption.isSet(),
-                false, // @suarezcetrulo : first model is not old. // TODO am I using this flag?
+                false, // @suarezcetrulo : first model is not old. An old model (retrieved from the concept history) doesn't train at least becomes an active model again.
                 new Window(this.defaultWindowOption.getValue(), this.windowIncrementsOption.getValue(), this.minWindowSizeOption.getValue(), this.thresholdOption.getValue(), 
         				this.rememberConceptWindowOption.isSet()? true: false, this.resizeAllWindowsOption.isSet()? true: false, windowResizePolicyOption.getValue()),
                 null // @suarezcetrulo : Windows start at NULL (till the first earning is reached)
@@ -356,7 +356,7 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
      * Inner class that represents a single tree member of the forest. 
      * It contains some analysis information, such as the numberOfDriftsDetected, 
      */
-    protected final class ARFBaseLearner {
+    protected final class RCARFBaseLearner {
         public int indexOriginal;
         public long createdOn;
         public long lastDriftOn;
@@ -376,30 +376,14 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
         public boolean useBkgLearner;
         public boolean useDriftDetector;
         public boolean useRecurringLearner; // @suarezcetrulo
-
         
         // Bkg learner
-        protected ARFBaseLearner bkgLearner;
+        protected RCARFBaseLearner bkgLearner;
         
-        // Statistics
-        public BasicClassificationPerformanceEvaluator evaluator;
-        protected int numberOfDriftsDetected;
-        protected int numberOfWarningsDetected;
-        
-		// ////////////////////////////////////////////////
-		// ADDED IN RCARF by @suarezcetrulo
-		// ////////////////////////////////////////////////
-        
-        // Internal statistics
-        public DynamicWindowClassificationPerformanceEvaluator internalWindowEvaluator; // only used in background and old classifiers
-        protected double lastError;
-        protected double errorBeforeWarning;
-        protected Window windowProperties;
-
         // Recurring learner
-        protected ARFBaseLearner bestRecurringLearner;
+        protected RCARFBaseLearner bestRecurringLearner;
         protected boolean recurringConceptDetected; 
-      
+        
         // Running learners from the concept history. 
         // The concept history is a concurrent array list that can be changed at any moment by any model, as they work in parallel.
         // Therefore, for the sake of simplicity, the snapshot below of the concept history is taken at the start of the warning window.
@@ -408,9 +392,19 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
         
         // Copy of main model at the beginning of the warning window for its copy in the Concept History
         protected Concept tmpCopyOfModel;  
-        // ////////////////////////////////////////////////
-		// ////////////////////////////////////////////////
+        
+        // Statistics
+        public BasicClassificationPerformanceEvaluator evaluator;
+        protected int numberOfDriftsDetected;
+        protected int numberOfWarningsDetected;
 
+        // Internal statistics
+        public DynamicWindowClassificationPerformanceEvaluator internalWindowEvaluator; // only used in background and old classifiers
+        protected double lastError;
+        protected double errorBeforeWarning;
+        protected Window windowProperties;
+
+        
         private void init(int indexOriginal, ARFHoeffdingTree instantiatedClassifier, BasicClassificationPerformanceEvaluator evaluatorInstantiated, 
             long instancesSeen, boolean useBkgLearner, boolean useDriftDetector, ClassOption driftOption, ClassOption warningOption, boolean isBackgroundLearner, 
             boolean useRecurringLearner, boolean isOldLearner, Window windowProperties, DynamicWindowClassificationPerformanceEvaluator internalEvaluator) { // last parameters added by @suarezcetrulo
@@ -456,7 +450,7 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
         }
 
         // last inputs parameters added by @suarezcetrulo
-        public ARFBaseLearner(int indexOriginal, ARFHoeffdingTree instantiatedClassifier, BasicClassificationPerformanceEvaluator evaluatorInstantiated, 
+        public RCARFBaseLearner(int indexOriginal, ARFHoeffdingTree instantiatedClassifier, BasicClassificationPerformanceEvaluator evaluatorInstantiated, 
                     long instancesSeen, boolean useBkgLearner, boolean useDriftDetector, ClassOption driftOption, ClassOption warningOption, 
                     boolean isBackgroundLearner, boolean useRecurringLearner, boolean isOldLearner, 
                     Window windowProperties, DynamicWindowClassificationPerformanceEvaluator bkgInternalEvaluator) {
@@ -472,7 +466,7 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 						
 			// 2 Transition to the best bkg or retrieved old learner
         		if ((this.recurringConceptDetected && this.bestRecurringLearner != null) || (this.useBkgLearner && this.bkgLearner != null)) { //&& this.useRecurringLearner (condition implicit in the others)
-        			ARFBaseLearner newActiveModel = null;
+        			RCARFBaseLearner newActiveModel = null;
         			
     	            // 3 Move copy of active model made before warning to Concept History
     	            ConceptHistory.historyList.put(tmpCopyOfModel.index, tmpCopyOfModel.copy());
@@ -615,7 +609,7 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
             bkgInternalWindowEvaluator.reset();
             
             // 4 Create a new bkgLearner object (TODO: IF I SEE REPEATED INDEXES IT MAY BE DUE TO THIS, IT'S SENDING THE SAME INDEX. WE'D HAVE TO CREATE A NEW ONE -  MAYBE USING AN STATIC PARAM IN THE CONCEPT HISTORY(?) - SEE HOW'S DONE THIS IN THE ENSEMBLE)
-            this.bkgLearner = new ARFBaseLearner(indexOriginal, bkgClassifier, bkgEvaluator, instancesSeen, 
+            this.bkgLearner = new RCARFBaseLearner(indexOriginal, bkgClassifier, bkgEvaluator, instancesSeen, 
             		this.useBkgLearner, this.useDriftDetector, this.driftOption, this.warningOption, true, this.useRecurringLearner, false, 
             									   this.windowProperties, bkgInternalWindowEvaluator); // added last inputs parameter by @suarezcetrulo        	
         }
@@ -691,12 +685,12 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
      * Inner class to assist with the multi-thread execution. 
      */
     protected class TrainingRunnable implements Runnable, Callable<Integer> {
-        final private ARFBaseLearner learner;
+        final private RCARFBaseLearner learner;
         final private Instance instance;
         final private double weight;
         final private long instancesSeen;
 
-        public TrainingRunnable(ARFBaseLearner learner, Instance instance, 
+        public TrainingRunnable(RCARFBaseLearner learner, Instance instance, 
                 double weight, long instancesSeen) {
             this.learner = learner;
             this.instance = instance;
@@ -785,7 +779,7 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 			return historyList.get(key);
 		}
 		
-	    public ARFBaseLearner getConceptLearner(int key) {
+	    public RCARFBaseLearner getConceptLearner(int key) {
 			return historyList.get(key).getBaseLearner();
 	    }
 	    
@@ -810,7 +804,7 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
     		protected long classifiedInstances;
     		protected long instancesSeen;
     		
-    		public ARFBaseLearner conceptLearner;
+    		public RCARFBaseLearner conceptLearner;
     		
    	    // Constructor
 	    public ConceptLearner(int index, ARFHoeffdingTree classifier, BasicClassificationPerformanceEvaluator conceptEvaluator,
@@ -826,7 +820,7 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 	    		this.classifiedInstances=classifiedInstances;
 	    		
 	    		// Create concept learner
-			this.conceptLearner = new ARFBaseLearner(index, classifier, conceptEvaluator, instancesSeen, 
+			this.conceptLearner = new RCARFBaseLearner(index, classifier, conceptEvaluator, instancesSeen, 
                     false, useDriftDetector, driftOption, warningOption, true, useRecurringLearner, isOldModel, windowProperties, internalConceptEvaluator);
     }
 	    
@@ -834,7 +828,7 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 			return index;	    	
 	    }
 	    
-	    public ARFBaseLearner getBaseLearner() {
+	    public RCARFBaseLearner getBaseLearner() {
 			return conceptLearner;	    	
 	    }   
 	    
