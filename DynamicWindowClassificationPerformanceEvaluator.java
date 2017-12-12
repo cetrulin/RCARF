@@ -144,7 +144,7 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
          protected boolean resizingEnabled;
          
          // Resizing decision factor
-         protected double priorEstimation; // error at the beginning of the warning window
+         protected double priorEstimation; // prior error at the beginning of the warning window
          protected double threshold;
          
          // Constructor for window: threshold = -1 means that selected size update policy is 1
@@ -166,30 +166,133 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
 
          // It adds errors per classified row
          public void add(double value) {
-        	 	
-        	 	if(this.SizeWindow==-1) {
-            	 	// System.out.println("Static Window --> Adding result: "+value+" - window size was: "+this.SizeWindow);
-                sum += value;
-                len++;
-        	 		
-        	 	} else {
-            	 	System.out.println("Dynamic Window --> Adding result: "+value+" - window size was:"+this.SizeWindow);
+        	 	//System.out.println("Dynamic Window --> Adding result: "+value+" - window size was:"+this.SizeWindow);
+  			// Remove oldest if it surpasses windowSize + increments
+         	if(window.size()>=(this.SizeWindow+this.sizeIncrements)) this.window.remove(0);
 
-    	  			// Remove oldest if it surpasses windowSize + increments
-    	         	if(window.size()>(this.SizeWindow+this.sizeIncrements)) { // TODO. If increments are too big, the window will grow faster than the data arrives. should we do anything?
-    	         		this.window.remove(0);
-    	         		System.out.println("REMOVE");
-    	         	}
-            	 	
-	        	 	// Always storing extra results just in case we increment the window size
-	  			this.window.add(value);
-
-	         	// Resize window
-	         	if (this.resizingEnabled) updateWindowSize();
-	         	System.out.println("after resizing, window size is:"+this.SizeWindow);
-        	 	}
-
+        	 	// Always storing extra results just in case the window grows
+  			this.window.add(value);
+  			
+         	// Resize window -- this update window size here is designed for increments of 1 unit, 
+  			// as it is executed everytime one instance is created. 
+  			// Otherwise, the window could grow faster than the incoming data and be pointless
+         	if (this.resizingEnabled) updateWindowSize(); 
+         	//System.out.println("After resizing, window size is:"+this.SizeWindow);
          }
+         
+         // Returns the latest error window creating a sublist of the last errors.
+         // As we store the plus last INCREMENT_SIZE errors, we need to start from the position INCREMENT_SIZE-1 (zero indexed)
+         // Size of the sublist is WINDOW_SIZE 
+         public double estimation(){ // = getLastWindowEstimation
+    	 		//if (this.window.size() == 0) return getLargeWindowEstimation ();
+    	 		//else {
+        	 		// Parameters for sublists
+        	 		int generalStartPoint = this.sizeIncrements; // we always have one extra increment in the whole window (when full)
+        	 		int specialStartPoint = this.window.size() % this.SizeWindow;  
+        	 		
+        	 		// Print stats 1
+        	 		System.out.println("In Estimator #"+this.estimatorID+" with #"+this.window.size()+" examples in total and WindowSize is "+SizeWindow+" so prediction is :"
+        	 				+(estimateError(this.window.subList((this.window.size() < this.SizeWindow ? 
+	 								0 : (this.window.size() - generalStartPoint) < this.SizeWindow ? 
+	 								specialStartPoint : generalStartPoint 
+			        	 		), this.window.size()))));
+        	 		// 2 & 3
+        	 		System.out.println(this.window.size()+" "+this.SizeWindow+" "+this.sizeIncrements);
+        	 		System.out.println("sublist From: "+(this.window.size() < this.SizeWindow ? 
+							0 : (this.window.size() - generalStartPoint) < this.SizeWindow ? 
+							specialStartPoint : generalStartPoint )+" To: "+(this.window.size()));
+        	 		
+        	 		return estimateError(getEstimationSublist(this.SizeWindow,generalStartPoint));
+    	 		//}
+         }
+
+         
+         public double getSmallerWindowEstimation (){
+    	 		// Parameters for sublists
+    	 		int smallerSize = this.SizeWindow-this.sizeIncrements;
+    	 		int generalStartPoint = this.sizeIncrements*2; // one extra decrement
+    	 		return estimateError(getEstimationSublist(smallerSize,generalStartPoint));
+         }
+         
+ 		/** EXPLANATION by @author suarezcetrulo:
+ 		 *  There are three diferent cases:
+ 		 * If actualSize < desiredWindowSize THEN we start from pos: 0
+ 		 * Else if (actualSize - startPoint) < desiredWindowSize THEN we start from pos: actualSize % desiredWindowSize
+ 		 * Otherwise: we start from startPoint ( = startPoint in normal window + one extra increment)
+ 		 * 
+ 		 * We always finish in actualSize (as it's where the latest results are)
+ 		 * @param desiredSize: window size or smaller window size
+ 		 * @param generalStartPoint: this.sizeIncrements or this.sizeIncrements*2 (for smallerWindows)
+ 		 * @return sublist with the desired sub window
+ 		 */
+         public List<Double> getEstimationSublist(int desiredSize, int generalStartPoint){
+	        	 return this.window.subList((this.window.size() < desiredSize ? 
+							0 : (this.window.size() - generalStartPoint) < desiredSize ? 
+							this.window.size() % desiredSize : generalStartPoint 
+	     	 		), this.window.size()); 
+         }
+         
+         public double getLargeWindowEstimation (){
+     			return estimateError(this.window);
+         }
+                 
+         public double estimateError(List<Double> list) {
+         	  Double sum = 0.0;
+         	  if(!list.isEmpty()) {
+         	    for (Double error : list) {
+         	        sum += error;
+         	    }
+         	    //System.out.println("Error is: "+(sum.doubleValue() / (double) list.size()));
+         	    return sum.doubleValue() / (double) list.size();
+         	  }
+         	  return sum;         	  
+         }
+        
+         public void updateWindowSize() {
+        	 
+    	 		switch(this.windowResizePolicy) {
+    	 		
+        	 		case 0: // TODO -> CHECK THIS
+             		// size update policy 0 [ min(error(c,w_c)) - priorError ] >= 0 -> window size increases
+             		//if(priorError!=-1) { .. }
+         			if(estimation() >= this.priorEstimation)
+         				this.SizeWindow+=this.sizeIncrements;
+         			else // otherwise it decreases
+         				this.SizeWindow-=this.sizeIncrements;
+         				if(this.SizeWindow<=this.minimumSize) 
+         					this.SizeWindow=this.minimumSize;
+         			break;
+         			
+        	 		case 1:
+             		// size update policy 1 [ min(error(c,w_c)) - priorError ] > threshold -> window size increases
+             		//if(priorError!=-1) { .. }
+         			if(estimation() - this.priorEstimation > this.threshold)
+         				this.SizeWindow+=this.sizeIncrements;
+         			else // otherwise it decreases
+         				this.SizeWindow-=this.sizeIncrements;
+         				if(this.SizeWindow<this.minimumSize) 
+         					this.SizeWindow=this.minimumSize;
+         			break;
+         			
+        	 		case 2:
+        	 			//For each c, W_c=s  , where s is an small number / For each iteration, independently of ny situations / a = active model
+        	 			//if(priorError==-1) { .. }
+             		double W_a_candidate_0=estimation(); // or  W_a_candidate_0=getAverageOfErrors(getLastWindow())
+             		double W_a_candidate_1=getLargeWindowEstimation();
+             		double W_a_candidate_2=getSmallerWindowEstimation ();
+        		
+             		if ( W_a_candidate_1 > W_a_candidate_0 && W_a_candidate_1 > W_a_candidate_2 ) // Increase window size
+         				this.SizeWindow+=this.sizeIncrements;
+             		else if ( W_a_candidate_2 > W_a_candidate_0 && W_a_candidate_2 > W_a_candidate_1 ) // Decrease window size
+         				this.SizeWindow-=this.sizeIncrements;
+         				if(this.SizeWindow<this.minimumSize) 
+         					this.SizeWindow=this.minimumSize;
+                   //else System.out.println("Window size remains the same");
+        	 			break;
+        	 		  // no default case
+    	 		}		
+         }
+         
          
          public void reset() {
          		this.window.clear();
@@ -202,101 +305,6 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
          
          public int getSize() {
         	 	return this.SizeWindow;
-         }
-         
-         // Returns the latest error window creating a sublist of the last errors.
-         // As we store the plus last INCREMENT_SIZE errors, we need to start from the position INCREMENT_SIZE-1 (zero indexed)
-         // Size of the sublist is WINDOW_SIZE 
-         public double estimation(){ // = getLastWindowEstimation
-        	 		//System.out.println("In Estimator #"+this.estimatorID+" with #"+this.window.size()+" examples in total and WindowSize is "+SizeWindow+" so prediction is :"
-        	 		//		+(estimateError(this.window.subList((this.window.size()-(this.sizeIncrements-1)), 
-        	 		//		this.window.size() < this.SizeWindow ? this.window.size() : this.SizeWindow))));
-        	 		System.out.println(this.window.size()+" "+this.SizeWindow+" "+this.sizeIncrements);
-        	 		System.out.println("sublist From: "+(this.window.size()-(this.sizeIncrements-1))+" To: "+(this.window.size() < this.SizeWindow ? this.window.size() : this.SizeWindow));
-        	 		//if (SizeWindow==-1) return sum/len;
-        	 		//else 
-        	 		
-        	 		/*estimateError(this.window.subList((this.window.size()-(this.sizeIncrements-1)),  
-        	 				this.window.size() < this.SizeWindow ? this.window.size() : this.SizeWindow));*/
-        	 		if(this.window.size()==0) return getLargeWindowEstimation ();
-        	 		// window.size when window is full should be = (sizeWindow + windowincrements). so that's the limit (where the newest value is)
-        	 		else return estimateError(this.window.subList(this.sizeIncrements,  
-        	 				this.window.size() < this.SizeWindow ? this.window.size() : (this.SizeWindow + this.sizeIncrements)));  // changed TODO: test
-        	 		// TODO: test this very well
-         }
-                  
-         //8,10,1
-         //7
-         //1,8
-         
-         public double getSmallerWindowEstimation (){
-        	 		return 0.0;
-        	 		//TODO: do the same than above
-        	 		//int smallerSize = this.SizeWindow-this.sizeIncrements;
-     			//return estimateError(this.window.subList(((this.window.size() - smallerSize)+this.sizeIncrements), 
-     			//		 this.window.size() < smallerSize ? this.window.size() : (smallerSize + this.sizeIncrements))); // added the -1's at the end. TODO: test
-         }
-         
-         public double getLargeWindowEstimation (){
-     			return estimateError(this.window);
-         }
-                 
-         public double estimateError(List<Double> list) {
-         	  Double sum = 0.0;
-         	  if(!list.isEmpty()) {
-         	    for (Double error : list) {
-         	    	System.out.println("enters and sum is: "+sum);
-         	        sum += error;
-         	    }
-         	    return sum.doubleValue() / list.size();
-         	  }
-         	  return sum;         	  
-         }
-        
-         public void updateWindowSize() {
-        	 
-        	 		switch(this.windowResizePolicy) {
-        	 		
-	        	 		case 0: // TODO -> CHECK THIS
-	             		// size update policy 0 [ min(error(c,w_c)) - priorError ] >= 0 -> window size increases
-	             		//if(priorError!=-1) { .. }
-	         			if(estimation() >= this.priorEstimation)
-	         				this.SizeWindow+=this.sizeIncrements;
-	         			else // otherwise it decreases
-	         				this.SizeWindow-=this.sizeIncrements;
-	         				if(this.SizeWindow<=this.minimumSize) 
-	         					this.SizeWindow=this.minimumSize;
-	         			break;
-	         			
-	        	 		case 1:
-	             		// size update policy 1 [ min(error(c,w_c)) - priorError ] > threshold -> window size increases
-	             		//if(priorError!=-1) { .. }
-	         			if(estimation() - this.priorEstimation > this.threshold)
-	         				this.SizeWindow+=this.sizeIncrements;
-	         			else // otherwise it decreases
-	         				this.SizeWindow-=this.sizeIncrements;
-	         				if(this.SizeWindow<this.minimumSize) 
-	         					this.SizeWindow=this.minimumSize;
-	         			break;
-	         			
-	        	 		case 2:
-	        	 			//For each c, W_c=s  , where s is an small number / For each iteration, independently of ny situations / a = active model
-	        	 			//if(priorError==-1) { .. }
-	             		double W_a_candidate_0=estimation(); // or  W_a_candidate_0=getAverageOfErrors(getLastWindow())
-	             		double W_a_candidate_1=getLargeWindowEstimation();
-	             		double W_a_candidate_2=getSmallerWindowEstimation ();
-	        		
-	             		if ( W_a_candidate_1 > W_a_candidate_0 && W_a_candidate_1 > W_a_candidate_2 ) // Increase window size
-	         				this.SizeWindow+=this.sizeIncrements;
-	             		else if ( W_a_candidate_2 > W_a_candidate_0 && W_a_candidate_2 > W_a_candidate_1 ) // Decrease window size
-	         				this.SizeWindow-=this.sizeIncrements;
-	         				if(this.SizeWindow<this.minimumSize) 
-	         					this.SizeWindow=this.minimumSize;
-	                   //else System.out.println("Window size remains the same");
-	        	 			break;
-	        	 		  // no default case
-        	 		}		
-         
          }
 
     }
