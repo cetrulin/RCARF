@@ -214,12 +214,17 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 
             if(!disableRecurringDriftDetectionOption.isSet()) {
 	            // 2 If the warning window is open, testing in background model internal evaluator (for comparison purposes) 
-	            if(this.ensemble[i].bkgLearner != null && this.ensemble[i].bkgLearner.internalWindowEvaluator!=null) 
-	            		this.ensemble[i].bkgLearner.internalWindowEvaluator.addResult(example, vote.getArrayRef());
+	            if(this.ensemble[i].bkgLearner != null && this.ensemble[i].bkgLearner.internalWindowEvaluator!=null) {
+	                 DoubleVector bkgVote = new DoubleVector(this.ensemble[i].bkgLearner.getVotesForInstance(instance)); 
+	                 System.out.println("bkgVotedClass: "+bkgVote.getArrayRef().toString()+" example: "+example);
+	            		this.ensemble[i].bkgLearner.internalWindowEvaluator.addResult(example, bkgVote.getArrayRef());
+	            }
 	            // 3 If the concept history is ready and it contains old models, testing in each old model internal evaluator (to compare against bkg one)
 	            if(this.ensemble[i].historySnapshot != null && (this.ensemble[i].historySnapshot).getNumberOfConcepts() > 0) {
 		            	for (ConceptLearner oldModel : (this.ensemble[i].historySnapshot).getConceptHistoryValues()) { // TODO: test this
-		            		oldModel.conceptLearner.internalWindowEvaluator.addResult(example, vote.getArrayRef()); // TODO: test this
+		                 DoubleVector oldModelVote = new DoubleVector(oldModel.conceptLearner.getVotesForInstance(instance)); // TODO. this
+		                 System.out.println("bkgVotedClass: "+oldModelVote.getArrayRef().toString()+" example: "+example);
+		            		oldModel.conceptLearner.internalWindowEvaluator.addResult(example, oldModelVote.getArrayRef()); // TODO: test this
 		            	}
 	            }
             }
@@ -472,10 +477,9 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
     	            tmpCopyOfModel.reset();
     	            tmpCopyOfModel = null;
     	            
-	            // 3 Pick new active model (the best one selected in step 1)
-	            if(this.recurringConceptDetected && this.bestRecurringLearner != null) 
-	            	newActiveModel = this.bestRecurringLearner; 
-	            else if(this.useBkgLearner && this.bkgLearner != null) newActiveModel = this.bkgLearner; 
+    	            // 3 Pick new active model (the best one selected in step 1)
+    	            if(this.recurringConceptDetected && this.bestRecurringLearner != null) newActiveModel = this.bestRecurringLearner; // System.out.println("RECURRING DRIFT RESET IN MODEL #"+this.indexOriginal+" TO MODEL #"+this.bestRecurringLearner.indexOriginal);   
+    	            else if(this.useBkgLearner && this.bkgLearner != null) newActiveModel = this.bkgLearner; // System.out.println("DRIFT RESET IN MODEL #"+this.indexOriginal+" TO NEW MODEL #"+this.bkgLearner.indexOriginal); 
 	            
                 // 4 Update window size in window properties depending on window size inheritance flag (entry parameter/Option)
                 newActiveModel.windowProperties.setSize(((newActiveModel.windowProperties.rememberWindowSize) ? 
@@ -613,6 +617,8 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
             BasicClassificationPerformanceEvaluator bkgEvaluator = (BasicClassificationPerformanceEvaluator) this.evaluator.copy();
             bkgEvaluator.reset();
             
+            System.out.println("------------------------------");
+            System.out.println("Create estimator for BKG model in position: "+this.indexOriginal);
             // 3 Adding also internal evaluator (window) in bkgEvaluator (by @suarezcetrulo)
             DynamicWindowClassificationPerformanceEvaluator bkgInternalWindowEvaluator = null;
             if(this.useRecurringLearner) {
@@ -621,7 +627,8 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
                 		this.lastError,this.windowProperties.getDecisionThreshold(),true,this.windowProperties.getResizingPolicy());  
                 bkgInternalWindowEvaluator.reset();	
             }
-                        
+            System.out.println("------------------------------");
+            
             // 4 Create a new bkgLearner object
             this.bkgLearner = new RCARFBaseLearner(indexOriginal, bkgClassifier, bkgEvaluator, this.lastWarningOn, 
             		this.useBkgLearner, this.useDriftDetector, this.driftOption, this.warningOption, true, this.useRecurringLearner, false, 
@@ -641,13 +648,17 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
                  BasicClassificationPerformanceEvaluator auxConceptEvaluator = (BasicClassificationPerformanceEvaluator) this.evaluator.copy();
                  auxConceptEvaluator.reset();
         			
+                 System.out.println("------------------------------");
+                 System.out.println("Create estimator for old model with history ID: "+auxConceptHistoryIndex+" in position: "+this.indexOriginal);
+                 
         			// 3 Create an internal evaluator for each of the Concept History
         			DynamicWindowClassificationPerformanceEvaluator auxConceptInternalWindow = new DynamicWindowClassificationPerformanceEvaluator(
         				auxConcept.windowProperties.getSize(), auxConcept.windowProperties.getIncrements(), auxConcept.windowProperties.getMinSize(),
 	        			this.lastError, auxConcept.windowProperties.getDecisionThreshold(),
 	        			auxConcept.windowProperties.getDynamicWindowInOldModelsFlag(), auxConcept.windowProperties.getResizingPolicy());  	
         			auxConceptInternalWindow.reset();        			
-        			
+                System.out.println("------------------------------");
+
             		// 4 Creates a Concept Learner for each historic concept
         			// It sends a copy of the active evaluator only for reference, as it's only used at the end if the active model transitions to the given concept.
         			historySnapshot.pushConceptLearner(new ConceptLearner(auxConcept.getEnsembleIndex(), auxConcept.getModel(), auxConceptEvaluator, 
