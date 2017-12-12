@@ -215,12 +215,14 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
          }
          
  		/** EXPLANATION by @author suarezcetrulo:
- 		 *  There are three diferent cases:
- 		 * If actualSize < desiredWindowSize THEN we start from pos: 0
- 		 * Else if (actualSize - startPoint) < desiredWindowSize THEN we start from pos: actualSize % desiredWindowSize
- 		 * Otherwise: we start from startPoint ( = startPoint in normal window + one extra increment)
+ 		 *  -End of sublist: we always finish in this.actualSize (as it's where the latest results are)
+ 		 *  -Start of sublist there are three different cases:
+ 		 * 		+ If actualSize < desiredWindowSize 
+ 		 * 		  THEN we start from pos: 0 (as we need the whole list to satisfy as much as we can the desiredSize)
+ 		 * 		+ Else if (actualSize - startPoint) < desiredWindowSize 
+ 		 * 		  THEN we start from pos: actualSize % desiredWindowSize (this will give us the residual that doesn't fit in our desiredSize and we can use as startPoint)
+ 		 * 		+ Otherwise: we start from the general startPoint (which is = largestWindowSize-desiredWindowSize)
  		 * 
- 		 * We always finish in actualSize (as it's where the latest results are)
  		 * @param desiredSize: window size or smaller window size
  		 * @param generalStartPoint: this.sizeIncrements or this.sizeIncrements*2 (for smallerWindows)
  		 * @return sublist with the desired sub window
@@ -233,7 +235,7 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
          }
          
          public double getLargeWindowEstimation (){
-     			return estimateError(this.window);
+     			return estimateError(this.window); // full window (with +1 increment)
          }
                  
          public double estimateError(List<Double> list) {
