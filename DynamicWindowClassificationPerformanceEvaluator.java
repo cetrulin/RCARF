@@ -187,21 +187,14 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
     	 		//if (this.window.size() == 0) return getLargeWindowEstimation ();
     	 		//else {
         	 		// Parameters for sublists
-        	 		int generalStartPoint = this.sizeIncrements; // we always have one extra increment in the whole window (when full)
-        	 		int specialStartPoint = this.window.size() % this.SizeWindow;  
+        	 		int generalStartPoint = this.sizeIncrements; // we always have one extra increment in the whole window (when full)  
         	 		
-        	 		// Print stats 1
-        	 		System.out.println("In Estimator #"+this.estimatorID+" with #"+this.window.size()+" examples in total and WindowSize is "+SizeWindow+" so prediction is :"
+        	 		// Print estimations 
+        	 		/*System.out.println("In Estimator #"+this.estimatorID+" with #"+this.window.size()+" examples in total and WindowSize is "+SizeWindow+" so prediction is :"
         	 				+(estimateError(this.window.subList((this.window.size() < this.SizeWindow ? 
 	 								0 : (this.window.size() - generalStartPoint) < this.SizeWindow ? 
 	 								specialStartPoint : generalStartPoint 
-			        	 		), this.window.size()))));
-        	 		// 2 & 3
-        	 		System.out.println(this.window.size()+" "+this.SizeWindow+" "+this.sizeIncrements);
-        	 		System.out.println("sublist From: "+(this.window.size() < this.SizeWindow ? 
-							0 : (this.window.size() - generalStartPoint) < this.SizeWindow ? 
-							specialStartPoint : generalStartPoint )+" To: "+(this.window.size()));
-        	 		
+			        	 		), this.window.size()))));*/
         	 		return estimateError(getEstimationSublist(this.SizeWindow,generalStartPoint));
     	 		//}
          }
