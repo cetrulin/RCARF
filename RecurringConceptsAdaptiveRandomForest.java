@@ -216,14 +216,12 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 	            // 2 If the warning window is open, testing in background model internal evaluator (for comparison purposes) 
 	            if(this.ensemble[i].bkgLearner != null && this.ensemble[i].bkgLearner.internalWindowEvaluator!=null) {
 	                 DoubleVector bkgVote = new DoubleVector(this.ensemble[i].bkgLearner.getVotesForInstance(instance)); 
-	                 System.out.println("bkgVotedClass: "+bkgVote.getArrayRef().toString()+" example: "+example);
 	            		this.ensemble[i].bkgLearner.internalWindowEvaluator.addResult(example, bkgVote.getArrayRef());
 	            }
 	            // 3 If the concept history is ready and it contains old models, testing in each old model internal evaluator (to compare against bkg one)
 	            if(this.ensemble[i].historySnapshot != null && (this.ensemble[i].historySnapshot).getNumberOfConcepts() > 0) {
 		            	for (ConceptLearner oldModel : (this.ensemble[i].historySnapshot).getConceptHistoryValues()) { // TODO: test this
 		                 DoubleVector oldModelVote = new DoubleVector(oldModel.conceptLearner.getVotesForInstance(instance)); // TODO. this
-		                 System.out.println("bkgVotedClass: "+oldModelVote.getArrayRef().toString()+" example: "+example);
 		            		oldModel.conceptLearner.internalWindowEvaluator.addResult(example, oldModelVote.getArrayRef()); // TODO: test this
 		            	}
 	            }
@@ -588,7 +586,6 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
             // Update the warning detection object for the current object 
             // (this effectively resets changes made to the object while it was still a bkg learner). 
             this.warningDetectionMethod = ((ChangeDetector) getPreparedClassOption(this.warningOption)).copy();
-            
         }
         
         // Clean warning window (removes all learners)
@@ -624,7 +621,8 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
             if(this.useRecurringLearner) {
                 bkgInternalWindowEvaluator = new DynamicWindowClassificationPerformanceEvaluator (
                 		this.windowProperties.getSize(),this.windowProperties.getIncrements(),this.windowProperties.getMinSize(),
-                		this.lastError,this.windowProperties.getDecisionThreshold(),true,this.windowProperties.getResizingPolicy());  
+                		this.lastError,this.windowProperties.getDecisionThreshold(),true,this.windowProperties.getResizingPolicy(), 
+                		"created for BKG classifier in ensembleIndex #"+this.indexOriginal);  
                 bkgInternalWindowEvaluator.reset();	
             }
             System.out.println("------------------------------");
@@ -648,16 +646,17 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
                  BasicClassificationPerformanceEvaluator auxConceptEvaluator = (BasicClassificationPerformanceEvaluator) this.evaluator.copy();
                  auxConceptEvaluator.reset();
         			
-                 System.out.println("------------------------------");
-                 System.out.println("Create estimator for old model with history ID: "+auxConceptHistoryIndex+" in position: "+this.indexOriginal);
+                 //System.out.println("------------------------------");
+                 //System.out.println("Create estimator for old model with history ID: "+auxConceptHistoryIndex+" in position: "+this.indexOriginal);
                  
         			// 3 Create an internal evaluator for each of the Concept History
         			DynamicWindowClassificationPerformanceEvaluator auxConceptInternalWindow = new DynamicWindowClassificationPerformanceEvaluator(
         				auxConcept.windowProperties.getSize(), auxConcept.windowProperties.getIncrements(), auxConcept.windowProperties.getMinSize(),
 	        			this.lastError, auxConcept.windowProperties.getDecisionThreshold(),
-	        			auxConcept.windowProperties.getDynamicWindowInOldModelsFlag(), auxConcept.windowProperties.getResizingPolicy());  	
+	        			auxConcept.windowProperties.getDynamicWindowInOldModelsFlag(), auxConcept.windowProperties.getResizingPolicy(),
+	        			"created for old-retrieved classifier with ConceptHistory ID #"+auxConceptHistoryIndex+" in ensembleIndex #"+this.indexOriginal);  	
         			auxConceptInternalWindow.reset();        			
-                System.out.println("------------------------------");
+                //System.out.println("------------------------------");
 
             		// 4 Creates a Concept Learner for each historic concept
         			// It sends a copy of the active evaluator only for reference, as it's only used at the end if the active model transitions to the given concept.
@@ -686,29 +685,22 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 		        		this.recurringConceptDetected=true;
 		        		System.out.println(snapshotRanking.size()); // TODO: debugging
 		        		System.out.println(getMinKey(snapshotRanking)); // TODO: debugging
-		        		
 		        		this.bestRecurringLearner=historySnapshot.getConceptLearner(getMinKey(snapshotRanking));
-		        		System.out.println("best recurring learner warning flag es: "+bestRecurringLearner.warningDetectionMethod);
 		    		} else this.recurringConceptDetected = false;
 	    		} else this.recurringConceptDetected = false;
-	    		
- 			System.out.println("recConcept flag in pos "+this.indexOriginal+" is "+this.recurringConceptDetected);
-
+ 			// System.out.println("recConcept flag in pos "+this.indexOriginal+" is "+this.recurringConceptDetected);
         }
         
         // Aux method for getting the best classifier in a hashMap of (int modelIndex, double averageErrorInWindow) 
-        private Integer getMinKey(Map<Integer, Double> map, Integer... keys) {
+        private Integer getMinKey(Map<Integer, Double> map) {
         	    Integer minKey = null;
-        	    
-        	    System.out.println("map is: "+map);
-        	    System.out.println("number of keys is: "+map.keySet().size()); // TODO: looks like fixed now...
-        	    
+        	    System.out.println("map is: "+map+" number of keys is: "+map.keySet().size()); // TODO. do I get the same values over and over again?
             double minValue = Double.MAX_VALUE;
             for(Integer key : map.keySet()) {
-            		System.out.println("key is:"+key);
-                double value = map.get(key);
-                if(value < minValue) {
-                	System.out.println("min error is: "+ value+" with key: "+key);
+            		System.out.println("Key is:"+key+" with value: "+map.get(key));
+                 double value = map.get(key);
+                 if(value < minValue) {
+                	   System.out.println("Min error is: "+ value+" with key: "+key);
                     minValue = value;
                     minKey = key;
                 }

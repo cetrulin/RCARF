@@ -4,6 +4,13 @@ import java.util.List;
 
 import com.github.javacliparser.FloatOption;
 import com.github.javacliparser.IntOption;
+import com.yahoo.labs.samoa.instances.Instance;
+
+import moa.core.Example;
+import moa.core.Measurement;
+import moa.core.Utils;
+import moa.evaluation.BasicClassificationPerformanceEvaluator.Estimator;
+
 import com.github.javacliparser.FlagOption;
 
 /**
@@ -37,6 +44,15 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
 	double priorEstimation;
 	boolean backgroundDynamicWindows;
 	boolean useOptions = true; // by default use options
+	
+	// Variables for methods overrided
+    private double totalWeightObserved;
+    @SuppressWarnings("unused")
+	private int lastSeenClass;
+
+
+	// Information about classifier that created the estimator
+	String createdBy; 
     
     // Specific constructor for Basic Classification Performance Evaluator (measures overall accuracy of the ensemble)
     /*public DynamicWindowClassificationPerformanceEvaluator(boolean staticWindow) {
@@ -52,8 +68,10 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
     }*/
     
     // Constructor for dynamic internal window evaluators
-    public DynamicWindowClassificationPerformanceEvaluator(int windowSize, int windowIncrements, int minWindowSize, double priorEstimation, double decisionThreshold, boolean resizingEnabled, int windowResizePolicy) {
-		this.windowSize = windowSize; // == windowSize
+    public DynamicWindowClassificationPerformanceEvaluator(int windowSize, int windowIncrements, int minWindowSize, 
+    		double priorEstimation, double decisionThreshold, boolean resizingEnabled, int windowResizePolicy, String createdBy) {
+    	
+		this.windowSize = windowSize; 
 		this.defaultSize =  windowSize;
 		this.windowIncrements = windowIncrements;
 		this.minWindowSize=minWindowSize;
@@ -61,8 +79,8 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
 		this.backgroundDynamicWindows=resizingEnabled;
 		this.windowResizePolicy=windowResizePolicy;
 		this.priorEstimation = priorEstimation;
-		// default size?
 		this.useOptions=false;
+		this.createdBy = createdBy;
     }
     
     @Override
@@ -71,6 +89,46 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
 	    reset(this.numClasses);
 	}
 	
+    // Overriding next few methods to avoid calculating extra evaluators for kappa statistics - @suarezcetrulo 
+    
+    @Override
+    public void reset(int numClasses) {
+        this.numClasses = numClasses;
+        this.weightCorrect = newEstimator();
+        this.lastSeenClass = 0;
+        this.totalWeightObserved = 0;
+    }
+
+    @Override
+    public void addResult(Example<Instance> example, double[] classVotes) {
+        Instance inst = example.getData();
+        double weight = inst.weight();
+        if (inst.classIsMissing() == false){
+            int trueClass = (int) inst.classValue();
+            int predictedClass = Utils.maxIndex(classVotes);
+            if (weight > 0.0) {
+                if (this.totalWeightObserved == 0) {
+                    reset(inst.dataset().numClasses());
+                }
+                this.totalWeightObserved += weight;
+                this.weightCorrect.add(predictedClass == trueClass ? weight : 0);
+            }
+            this.lastSeenClass = trueClass;
+        }
+    }
+    
+    @Override
+    public Measurement[] getPerformanceMeasurements() {
+        return new Measurement[]{
+                new Measurement("classified instances",
+                    getTotalWeightObserved()),
+                new Measurement("classifications correct (percent)",
+                    getFractionCorrectlyClassified() * 100.0)
+        };
+    }
+    
+    // //////////////////////////////////////////////
+    
 	public void clear(){
 		reset(this.numClasses);
 	}
@@ -103,14 +161,14 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
     		dynamicEstimatorID=dynamicEstimatorID+1;
     		//System.out.println("NEW WINDOW ESTIMATOR CREATED - call variable weightCorrect for more info.");    		
     		if (useOptions) {
-    			System.out.println("USE OPTIONS");
+    			// System.out.println("USE OPTIONS");
     			// When using the dynamic estimator as default one, there is no prior estimation (-1), so the only valid resizing policy is 2.
     	        return new DynamicWindowEstimator(this.widthOption.getValue(),this.widthIncrementsOption.getValue(), this.minWidthOption.getValue(), -1, 
     	        									 this.thresholdOption.getValue(), this.backgroundDynamicWindowsFlag.isSet(), 2,
     	        									 DynamicWindowClassificationPerformanceEvaluator.dynamicEstimatorID);
     		}
     		else {  
-    			System.out.println("START ESTIMATOR #"+dynamicEstimatorID+"   -   of SIZE: "+this.windowSize);
+    			//System.out.println("START ESTIMATOR #"+dynamicEstimatorID+" "+this.createdBy);
     	        return new DynamicWindowEstimator(this.windowSize, this.windowIncrements, this.minWindowSize, this.priorEstimation,
 	    	        								 this.decisionThreshold,this.backgroundDynamicWindows, this.windowResizePolicy, 
 	    	        								 DynamicWindowClassificationPerformanceEvaluator.dynamicEstimatorID);
@@ -151,7 +209,7 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
          public DynamicWindowEstimator(int initialSize, int sizeIncrements, int minSize, 
         		 						  double priorEstimation, double threshold, boolean resizingEnabled, 
         		 						  int windowResizePolicy, int estimatorID){
-        	 		System.out.println("Creating estimator #"+estimatorID+" with Window size: "+initialSize);
+        	 		//System.out.println("Creating estimator #"+estimatorID+" with Window size: "+initialSize);
         	 		this.estimatorID = estimatorID;
 	     		this.SizeWindow = initialSize;
 	     		this.defaultSize = initialSize;
