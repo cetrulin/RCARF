@@ -230,7 +230,7 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
 
          // It adds errors per classified row
          public void add(double value) {
-        	 	//System.out.println("Dynamic Window --> Adding result: "+value+" - window size was:"+this.SizeWindow);
+        	 	// System.out.println("Estimator #"+this.estimatorID+":  Adding result: "+value+" - window size was:"+this.SizeWindow);
   			// Remove oldest if it surpasses windowSize + increments
          	if(window.size()>=(this.SizeWindow+this.sizeIncrements)) this.window.remove(0);
 
@@ -239,7 +239,8 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
   			
          	// Resize window -- this update window size here is designed for increments of 1 unit, 
   			// as it is executed everytime one instance is created. 
-  			// Otherwise, the window could grow faster than the incoming data and be pointless
+  			// Otherwise, the window could grow faster than the incoming data and be pointless. 
+  			// The single remove statement above also follows this.
          	if (this.resizingEnabled) updateWindowSize(); 
          	//System.out.println("After resizing, window size is:"+this.SizeWindow);
          }
@@ -251,7 +252,6 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
     	 		//if (this.window.size() == 0) return getLargeWindowEstimation ();
     	 		//else {
         	 		// Parameters for sublists
-        	 		int generalStartPoint = this.sizeIncrements; // we always have one extra increment in the whole window (when full)  
         	 		
         	 		// Print estimations 
         	 		/*System.out.println("In Estimator #"+this.estimatorID+" with #"+this.window.size()+" examples in total and WindowSize is "+SizeWindow+" so prediction is :"
@@ -259,16 +259,16 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
 	 								0 : (this.window.size() - generalStartPoint) < this.SizeWindow ? 
 	 								specialStartPoint : generalStartPoint 
 			        	 		), this.window.size()))));*/
-        	 		return estimateError(getEstimationSublist(this.SizeWindow,generalStartPoint));
+        	 		//System.out.println("Error for estimator #"+this.estimatorID+": "+estimateError(getEstimationSublist(this.SizeWindow, this.sizeIncrements)));
+        	 		//System.out.println(this.window.toString());
+        	 		
+        	 		return estimateError(getEstimationSublist(this.SizeWindow, this.sizeIncrements));
     	 		//}
          }
 
          
          public double getSmallerWindowEstimation (){
-    	 		// Parameters for sublists
-    	 		int smallerSize = this.SizeWindow-this.sizeIncrements;
-    	 		int generalStartPoint = this.sizeIncrements*2; // one extra decrement
-    	 		return estimateError(getEstimationSublist(smallerSize,generalStartPoint));
+        	 	return estimateError(getEstimationSublist(this.SizeWindow-this.sizeIncrements, this.sizeIncrements*2));
          }
          
  		/** EXPLANATION by @author suarezcetrulo:
@@ -314,7 +314,8 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
         	 		case 0: // TODO -> CHECK THIS
              		// size update policy 0 [ min(error(c,w_c)) - priorError ] >= 0 -> window size increases
              		//if(priorError!=-1) { .. }
-         			if(estimation() >= this.priorEstimation)
+        	 			// working with accuracy results
+         			if(estimateError(getEstimationSublist(this.SizeWindow, this.sizeIncrements)) < this.priorEstimation)
          				this.SizeWindow+=this.sizeIncrements;
          			else // otherwise it decreases
          				this.SizeWindow-=this.sizeIncrements;
@@ -325,7 +326,7 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
         	 		case 1:
              		// size update policy 1 [ min(error(c,w_c)) - priorError ] > threshold -> window size increases
              		//if(priorError!=-1) { .. }
-         			if(estimation() - this.priorEstimation > this.threshold)
+         			if(estimation() - this.priorEstimation <= this.threshold)
          				this.SizeWindow+=this.sizeIncrements;
          			else // otherwise it decreases
          				this.SizeWindow-=this.sizeIncrements;
@@ -336,9 +337,11 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
         	 		case 2:
         	 			//For each c, W_c=s  , where s is an small number / For each iteration, independently of ny situations / a = active model
         	 			//if(priorError==-1) { .. }
-             		double W_a_candidate_0=estimation(); // or  W_a_candidate_0=getAverageOfErrors(getLastWindow())
-             		double W_a_candidate_1=getLargeWindowEstimation();
-             		double W_a_candidate_2=getSmallerWindowEstimation ();
+        	 			// -100 to work with error
+        	 			// working with accuracy results
+             		double W_a_candidate_0=100-estimation(); // or  W_a_candidate_0=getAverageOfErrors(getLastWindow())
+             		double W_a_candidate_1=100-getLargeWindowEstimation();
+             		double W_a_candidate_2=100-getSmallerWindowEstimation ();
         		
              		if ( W_a_candidate_1 > W_a_candidate_0 && W_a_candidate_1 > W_a_candidate_2 ) // Increase window size
          				this.SizeWindow+=this.sizeIncrements;

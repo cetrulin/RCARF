@@ -220,8 +220,9 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 	            }
 	            // 3 If the concept history is ready and it contains old models, testing in each old model internal evaluator (to compare against bkg one)
 	            if(this.ensemble[i].historySnapshot != null && (this.ensemble[i].historySnapshot).getNumberOfConcepts() > 0) {
-		            	for (ConceptLearner oldModel : (this.ensemble[i].historySnapshot).getConceptHistoryValues()) { // TODO: test this
-		                 DoubleVector oldModelVote = new DoubleVector(oldModel.conceptLearner.getVotesForInstance(instance)); // TODO. this
+		            	for (ConceptLearner oldModel : this.ensemble[i].historySnapshot.historyList.values()) { // TODO: test this
+		                DoubleVector oldModelVote = new DoubleVector(oldModel.conceptLearner.getVotesForInstance(instance)); // TODO. this
+		                // System.out.println("Im classifier number #"+oldModel.conceptLearner.classifier.calcByteSize()+" created on: "+oldModel.conceptLearner.createdOn+"  and last error was:  "+oldModel.conceptLearner.lastError);
 		            		oldModel.conceptLearner.internalWindowEvaluator.addResult(example, oldModelVote.getArrayRef()); // TODO: test this
 		            	}
 	            }
@@ -471,9 +472,10 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
         			
     	            // 2 Move copy of active model made before warning to Concept History. Its history ID will be the last one in the history (= size)
         			// Clean the copy afterwards.
-    	            ConceptHistory.historyList.put(ConceptHistory.nextID(), tmpCopyOfModel.copy()); 
-    	            tmpCopyOfModel.reset();
-    	            tmpCopyOfModel = null;
+    	            ConceptHistory.historyList.put(ConceptHistory.nextID(), this.tmpCopyOfModel.copy()); 
+    	            this.tmpCopyOfModel.reset();
+    	            this.tmpCopyOfModel = null;
+    	            // TODO: IS THIS OBJECT CORRECTLY COPIED? ARE THE OBJECTS IN THE CONCEPT HISTORY A COPY OF THE SAME
     	            
     	            // 3 Pick new active model (the best one selected in step 1)
     	            if(this.recurringConceptDetected && this.bestRecurringLearner != null) newActiveModel = this.bestRecurringLearner; // System.out.println("RECURRING DRIFT RESET IN MODEL #"+this.indexOriginal+" TO MODEL #"+this.bestRecurringLearner.indexOriginal);   
@@ -484,15 +486,15 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
                 		newActiveModel.internalWindowEvaluator.getWindowSize() : newActiveModel.windowProperties.windowDefaultSize)); 
 	            
 	            // 5 New active model is the best retrieved old model
-                this.windowProperties=newActiveModel.windowProperties;
+                this.windowProperties=newActiveModel.windowProperties; // internalEvaluator shouldnt be inherited
                 this.classifier = newActiveModel.classifier;
                 this.driftDetectionMethod = newActiveModel.driftDetectionMethod;
                 this.warningDetectionMethod = newActiveModel.warningDetectionMethod;                
                 this.evaluator = newActiveModel.evaluator;
-                this.createdOn = newActiveModel.createdOn;
+                this.createdOn = newActiveModel.createdOn; 
                 
                 // 6 Clear remove background and old learners 
-                resetWarningWindow ();
+                resetWarningWindow (); // TODO: TEST THAT THIS DOESN'T DROP THE NEW MODEL
 
         		} 
             else { 
@@ -592,39 +594,36 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
         public void resetWarningWindow () {
         	
             // 1 Reset bkg evaluator
-        		// TODO: Refactor - Add a method for this below so it can be reused in best recurring concept. 
-        		// Also see how to clean global parameters effectively.
-            if(this.bkgLearner != null && this.bkgLearner.internalWindowEvaluator!=null) {
-	        		if(this.bkgLearner.internalWindowEvaluator!=null) {
-	            		this.bkgLearner.internalWindowEvaluator.emptyEstimator();
-	            		this.bkgLearner.internalWindowEvaluator = null;
-	        		} this.bkgLearner.evaluator = null;
-	        		this.bkgLearner.classifier.resetLearning(); // TODO: does this create any new object?? if so, maybe not the way to go
-	        		this.bkgLearner.classifier = null;
-            } this.bkgLearner = null;
+        		this.bkgLearner=resetBkgModel(this.bkgLearner);
             
-            this.internalWindowEvaluator = null; // only a double check, as it should be always null (only used in background + old concept Learners)
-
             // 2 Reset recurring concept
             this.recurringConceptDetected = false;
-            if(this.bestRecurringLearner != null) {
-            		if(this.bestRecurringLearner.internalWindowEvaluator!=null) {
-	    	        		this.bestRecurringLearner.internalWindowEvaluator.emptyEstimator();
-	    	        		this.bestRecurringLearner.internalWindowEvaluator = null;
-            		} this.bestRecurringLearner.evaluator = null;
-	        		this.bestRecurringLearner.classifier.resetLearning(); // TODO: does this create any new object?? if so, maybe not the way to go
-	        		this.bestRecurringLearner.classifier = null;
-            } this.bestRecurringLearner = null; 
+            this.bestRecurringLearner = resetBkgModel(this.bestRecurringLearner);
             
             // 3 Reset concept history
-            // this.historySnapshot.resetHistory(); -> creates java.lang.NullPointerException
             if(this.historySnapshot != null && (this.historySnapshot).getNumberOfConcepts() > 0) {
 		        	for (ConceptLearner oldModel : (this.historySnapshot).getConceptHistoryValues()) { // TODO: test this
-		        		oldModel.reset();
-		        } 
+		        		oldModel.conceptLearner = resetBkgModel(oldModel.conceptLearner);
+		        } this.historySnapshot.resetHistory(); 
 	        	} this.historySnapshot = null;
+	        
+	        	// only a double check, as it should be always null (only used in background + old concept Learners)
+	        this.internalWindowEvaluator = null;
         }
         
+        public RCARFBaseLearner resetBkgModel(RCARFBaseLearner model){
+        		//if(model != null && model.internalWindowEvaluator!=null) {
+	        if(model != null) {
+	        		if(model.internalWindowEvaluator!=null) {
+	    	        		model.internalWindowEvaluator.emptyEstimator();
+	    	        		model.internalWindowEvaluator = null;
+	        		} model.evaluator = null;
+	        		//model.classifier.resetLearning(); 
+	        		model.classifier = null;
+	        } // model.finalize();
+	        model = null; 
+	        return model;
+        }
         
         // Creates BKG Model in warning window
         public void createBkgModel() {
@@ -668,8 +667,8 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
                  BasicClassificationPerformanceEvaluator auxConceptEvaluator = (BasicClassificationPerformanceEvaluator) this.evaluator.copy();
                  auxConceptEvaluator.reset();
         			
-                 //System.out.println("------------------------------");
-                 //System.out.println("Create estimator for old model with history ID: "+auxConceptHistoryIndex+" in position: "+this.indexOriginal);
+                 System.out.println("------------------------------");
+                 System.out.println("Create estimator for old model with history ID: "+auxConceptHistoryIndex+" in position: "+this.indexOriginal);
                  
         			// 3 Create an internal evaluator for each of the Concept History
         			DynamicWindowClassificationPerformanceEvaluator auxConceptInternalWindow = new DynamicWindowClassificationPerformanceEvaluator(
@@ -678,13 +677,15 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 	        			auxConcept.windowProperties.getDynamicWindowInOldModelsFlag(), auxConcept.windowProperties.getResizingPolicy(),
 	        			"created for old-retrieved classifier with ConceptHistory ID #"+auxConceptHistoryIndex+" in ensembleIndex #"+this.indexOriginal);  	
         			auxConceptInternalWindow.reset();        			
-                //System.out.println("------------------------------");
+                System.out.println("------------------------------");
 
             		// 4 Creates a Concept Learner for each historic concept
         			// It sends a copy of the active evaluator only for reference, as it's only used at the end if the active model transitions to the given concept.
-        			historySnapshot.pushConceptLearner(new ConceptLearner(auxConcept.getEnsembleIndex(), auxConcept.getModel(), auxConceptEvaluator, 
+        			historySnapshot.pushConceptLearner(new ConceptLearner(auxConcept.getEnsembleIndex(), 
+        				(ARFHoeffdingTree) auxConcept.getModel().copy(), (BasicClassificationPerformanceEvaluator) auxConceptEvaluator.copy(), 
     					auxConcept.getNumberOfInstancesProcessedByCreation(), auxConcept.getNumberOfInstancesClassified(), auxConcept.getNumberOfInstancesSeen(), 
-    					auxConcept.windowProperties, auxConceptInternalWindow, this.useBkgLearner, this.useDriftDetector, this.driftOption, this.warningOption, this.useRecurringLearner, //TODO: also save this in concept?
+    					auxConcept.windowProperties, (DynamicWindowClassificationPerformanceEvaluator) auxConceptInternalWindow.copy(), 
+    					this.useBkgLearner, this.useDriftDetector, this.driftOption, this.warningOption, this.useRecurringLearner, 
     					true, auxConceptHistoryIndex)); // second last param true as this refers to old models
         		}
         }
@@ -696,9 +697,11 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
         		// 1 - Add old models
 	    		for (ConceptLearner auxConcept : historySnapshot.getConceptHistoryValues()) {
 	    			// Check that the concept still is in the concept history and available to be selected. If so, it adds its result to the ranking
-	    			if(ConceptHistory.historyList.containsKey(auxConcept.getHistoryIndex())) 
+	    			if(ConceptHistory.historyList.containsKey(auxConcept.getHistoryIndex())) {
 	    				snapshotRanking.put(auxConcept.getHistoryIndex(), 
 	    						auxConcept.conceptLearner.internalWindowEvaluator.getFractionIncorrectlyClassified());
+	    				System.out.println(auxConcept.conceptLearner.internalWindowEvaluator.getFractionIncorrectlyClassified());
+	    			}
 	    		}
 	    		// If there are no available choices, the new active model will be the background one
 	    		if(snapshotRanking.size()>0) {
@@ -890,20 +893,7 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 				   useBkgLearner, useDriftDetector, driftOption, warningOption, true, useRecurringLearner, isOldModel, 
                     windowProperties, internalConceptEvaluator);
 	    }
-	    
-	    public void reset() {
-	    		// this.conceptLearner.classifier.resetLearning(); // TODO: does this create any new object?? if so, maybe not the way to go
-	    		this.conceptLearner.classifier = null;
-	    		this.conceptLearner.windowProperties = null;
-	    		this.conceptLearner.indexOriginal = -1;
-	    		classifiedInstances = instancesSeen = createdOn = -1;
-	    		if (this.conceptLearner.internalWindowEvaluator != null && this.conceptLearner.internalWindowEvaluator.getWindowSize()>0)
-	    			this.conceptLearner.internalWindowEvaluator.emptyEstimator();
-	    		this.conceptLearner.evaluator = null;
-	    		this.conceptLearner = null;
-	    		// TODO: this reset should have a sub function that is the one in common with the way of reseting evaluators in the RCARF learner	    		
-	    }
-	    
+	    	    
 	    public int getEnsembleIndex() {
 			return this.ensembleIndex;	    	
 	    }
@@ -915,6 +905,19 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 	    public RCARFBaseLearner getBaseLearner() {
 			return conceptLearner;	    	
 	    }   
+	    
+	    /*public void reset() {
+				// this.conceptLearner.classifier.resetLearning(); 
+				this.conceptLearner.classifier = null;
+				this.conceptLearner.windowProperties = null;
+				this.conceptLearner.indexOriginal = -1;
+				classifiedInstances = instancesSeen = createdOn = -1;
+				if (this.conceptLearner.internalWindowEvaluator != null && this.conceptLearner.internalWindowEvaluator.getWindowSize()>0)
+				this.conceptLearner.internalWindowEvaluator.emptyEstimator();
+				this.conceptLearner.evaluator = null;
+				this.conceptLearner = null;
+				// TODO: this reset should have a sub function that is the one in common with the way of reseting evaluators in the RCARF learner	    		
+		}*/
 	    
 	}
     
