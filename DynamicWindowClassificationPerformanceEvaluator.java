@@ -98,6 +98,12 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
         this.lastSeenClass = 0;
         this.totalWeightObserved = 0;
     }
+    
+    // Forcing memory cleaning 
+    public void emptyEstimator() {
+    		((DynamicWindowEstimator) this.weightCorrect).clear();
+    		this.weightCorrect = null;
+    }
 
     @Override
     public void addResult(Example<Instance> example, double[] classVotes) {

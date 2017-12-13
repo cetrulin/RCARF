@@ -590,17 +590,39 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
         
         // Clean warning window (removes all learners)
         public void resetWarningWindow () {
+        	
             // 1 Reset bkg evaluator
-            this.bkgLearner = null;
-            this.internalWindowEvaluator = null; // only a double check, as it should be always null (only used in background + old concept Learners)
+        		// TODO: Refactor - Add a method for this below so it can be reused in best recurring concept. 
+        		// Also see how to clean global parameters effectively.
+            if(this.bkgLearner != null && this.bkgLearner.internalWindowEvaluator!=null) {
+	        		if(this.bkgLearner.internalWindowEvaluator!=null) {
+	            		this.bkgLearner.internalWindowEvaluator.emptyEstimator();
+	            		this.bkgLearner.internalWindowEvaluator = null;
+	        		} this.bkgLearner.evaluator = null;
+	        		this.bkgLearner.classifier.resetLearning(); // TODO: does this create any new object?? if so, maybe not the way to go
+	        		this.bkgLearner.classifier = null;
+            } this.bkgLearner = null;
             
+            this.internalWindowEvaluator = null; // only a double check, as it should be always null (only used in background + old concept Learners)
+
             // 2 Reset recurring concept
-            this.bestRecurringLearner = null; 
-            this.recurringConceptDetected = false; 
+            this.recurringConceptDetected = false;
+            if(this.bestRecurringLearner != null) {
+            		if(this.bestRecurringLearner.internalWindowEvaluator!=null) {
+	    	        		this.bestRecurringLearner.internalWindowEvaluator.emptyEstimator();
+	    	        		this.bestRecurringLearner.internalWindowEvaluator = null;
+            		} this.bestRecurringLearner.evaluator = null;
+	        		this.bestRecurringLearner.classifier.resetLearning(); // TODO: does this create any new object?? if so, maybe not the way to go
+	        		this.bestRecurringLearner.classifier = null;
+            } this.bestRecurringLearner = null; 
             
             // 3 Reset concept history
             // this.historySnapshot.resetHistory(); -> creates java.lang.NullPointerException
-            this.historySnapshot = null;
+            if(this.historySnapshot != null && (this.historySnapshot).getNumberOfConcepts() > 0) {
+		        	for (ConceptLearner oldModel : (this.historySnapshot).getConceptHistoryValues()) { // TODO: test this
+		        		oldModel.reset();
+		        } 
+	        	} this.historySnapshot = null;
         }
         
         
@@ -867,6 +889,19 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 			this.conceptLearner = new RCARFBaseLearner(ensembleIndex, classifier, conceptEvaluator, instancesSeen, 
 				   useBkgLearner, useDriftDetector, driftOption, warningOption, true, useRecurringLearner, isOldModel, 
                     windowProperties, internalConceptEvaluator);
+	    }
+	    
+	    public void reset() {
+	    		// this.conceptLearner.classifier.resetLearning(); // TODO: does this create any new object?? if so, maybe not the way to go
+	    		this.conceptLearner.classifier = null;
+	    		this.conceptLearner.windowProperties = null;
+	    		this.conceptLearner.indexOriginal = -1;
+	    		classifiedInstances = instancesSeen = createdOn = -1;
+	    		if (this.conceptLearner.internalWindowEvaluator != null && this.conceptLearner.internalWindowEvaluator.getWindowSize()>0)
+	    			this.conceptLearner.internalWindowEvaluator.emptyEstimator();
+	    		this.conceptLearner.evaluator = null;
+	    		this.conceptLearner = null;
+	    		// TODO: this reset should have a sub function that is the one in common with the way of reseting evaluators in the RCARF learner	    		
 	    }
 	    
 	    public int getEnsembleIndex() {
