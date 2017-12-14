@@ -261,7 +261,7 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
 			        	 		), this.window.size()))));*/
         	 		//System.out.println("Error for estimator #"+this.estimatorID+": "+estimateError(getEstimationSublist(this.SizeWindow, this.sizeIncrements)));
         	 		//System.out.println(this.window.toString());
-        	 		
+        	 		// TODO: ADD COMMENTED PRINT TRACES AGAIN TO SHOW EVOLUTION OF MODEL. / MAYBE ADD SOMETHING ELSE THAT SHOWS CHANGES. IDEAS?
         	 		return estimateError(getEstimationSublist(this.SizeWindow, this.sizeIncrements));
     	 		//}
          }

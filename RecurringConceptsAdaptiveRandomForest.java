@@ -212,6 +212,7 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
             // 1 Testing in active model
             this.ensemble[i].evaluator.addResult(example, vote.getArrayRef());
 
+            // TODO: add print here to show how many warnings are active each X iterations. We could also record drifts.
             if(!disableRecurringDriftDetectionOption.isSet()) {
 	            // 2 If the warning window is open, testing in background model internal evaluator (for comparison purposes) 
 	            if(this.ensemble[i].bkgLearner != null && this.ensemble[i].bkgLearner.internalWindowEvaluator!=null) {
@@ -473,7 +474,7 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
     	            // 2 Move copy of active model made before warning to Concept History. Its history ID will be the last one in the history (= size)
         			// Clean the copy afterwards.
     	            ConceptHistory.historyList.put(ConceptHistory.nextID(), this.tmpCopyOfModel.copy()); 
-    	            this.tmpCopyOfModel.reset();
+    	            // this.tmpCopyOfModel.reset();
     	            this.tmpCopyOfModel = null;
     	            // TODO: IS THIS OBJECT CORRECTLY COPIED? ARE THE OBJECTS IN THE CONCEPT HISTORY A COPY OF THE SAME
     	            
@@ -950,18 +951,10 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 	    		this.classifiedInstances=classifiedInstances;
 	    }
 	    
-	    public void reset() {
-	    		classifier.resetLearning();
-	    		classifier = null;
-	    		windowProperties = null;
-	    		index = -1;
-	    		classifiedInstances = instancesSeen = createdOn = -1;
-		}
-	    
 	    public Concept copy() {
-			return new Concept(this.index, this.classifier, 
-							  this.createdOn, this.classifiedInstances, this.instancesSeen, 
-							  this.windowProperties);
+			return new Concept(this.index, (ARFHoeffdingTree) this.classifier.copy(),
+							  this.createdOn, this.classifiedInstances, this.instancesSeen,
+							  this.windowProperties.copy());
 	    }
 	    
 	    // Getters
@@ -996,9 +989,15 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 	    		this.errorBeforeWarning=value;
 	    }
 	    
+	    /*public void reset() {
+	    		classifier.resetLearning();
+	    		classifier = null;
+	    		windowProperties = null;
+	    		index = -1;
+	    		classifiedInstances = instancesSeen = createdOn = -1;
+		}*/
 	}
     
-
     // Window-related parameters for classifier internal comparisons during the warning window 
     public class Window{
     	
@@ -1030,7 +1029,6 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 					  this.decisionThreshold, this.rememberWindowSize, 
 					  this.backgroundDynamicWindowsFlag, this.windowResizePolicy) ;
 		}
-		
 		
 		public int getSize() {
 			return this.windowSize;
