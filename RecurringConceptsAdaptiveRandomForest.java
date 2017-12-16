@@ -473,9 +473,9 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
         			
     	            // 2 Move copy of active model made before warning to Concept History. Its history ID will be the last one in the history (= size)
         			// Clean the copy afterwards.
-    	            ConceptHistory.historyList.put(ConceptHistory.nextID(), this.tmpCopyOfModel.copy()); 
-    	            // this.tmpCopyOfModel.reset();
-    	            this.tmpCopyOfModel = null;
+        			ConceptHistory.historyList.put(ConceptHistory.nextID(), this.tmpCopyOfModel); 
+        			this.tmpCopyOfModel = null;
+
     	            // TODO: IS THIS OBJECT CORRECTLY COPIED? ARE THE OBJECTS IN THE CONCEPT HISTORY A COPY OF THE SAME
     	            
     	            // 3 Pick new active model (the best one selected in step 1)
