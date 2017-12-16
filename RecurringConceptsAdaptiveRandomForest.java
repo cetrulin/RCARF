@@ -205,13 +205,12 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
         if(this.ensemble == null) 
             initEnsemble(instance);
         
-        // 3 If the concept history is ready and it contains old models, testing in each old model internal evaluator (to compare against bkg one)
+        // 1 If the concept history is ready and it contains old models, testing in each old model internal evaluator (to compare against bkg one)
         if(ConceptHistory.historyList != null && ConceptHistory.modelsOnWarning.containsValue(true) && ConceptHistory.historyList.size() > 0) {
 	        	for (Concept oldModel : ConceptHistory.historyList.values()) { // TODO: test this
 	            DoubleVector oldModelVote = new DoubleVector(oldModel.ConceptLearner.getVotesForInstance(instance)); // TODO. this
 	            // System.out.println("Im classifier number #"+oldModel.Concept.classifier.calcByteSize()+" created on: "+oldModel.Concept.createdOn+"  and last error was:  "+oldModel.Concept.lastError);
 	        		oldModel.ConceptLearner.internalWindowEvaluator.addResult(new InstanceExample(instance), oldModelVote.getArrayRef()); // TODO: test this
-	        		// System.out.println("ERROR %: "+oldModel.Concept.internalWindowEvaluator.getFractionIncorrectlyClassified());
 	        	}
         } // else System.out.println("No models on warning");
         // TODO: add print here to show how many warnings are active each X iterations. We could also record drifts. THIS IS DONE IN RESET
@@ -220,11 +219,11 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
         for (int i = 0 ; i < this.ensemble.length ; i++) {
             DoubleVector vote = new DoubleVector(this.ensemble[i].getVotesForInstance(instance));
             InstanceExample example = new InstanceExample(instance);
-            // 1 Testing in active model
+            // 2 Testing in active model
             this.ensemble[i].evaluator.addResult(example, vote.getArrayRef());
 
             if(!disableRecurringDriftDetectionOption.isSet()) {
-	            // 2 If the warning window is open, testing in background model internal evaluator (for comparison purposes) 
+	            // 3 If the warning window is open, testing in background model internal evaluator (for comparison purposes) 
 	            if(this.ensemble[i].bkgLearner != null && this.ensemble[i].bkgLearner.internalWindowEvaluator!=null) {
 	                 DoubleVector bkgVote = new DoubleVector(this.ensemble[i].bkgLearner.getVotesForInstance(instance)); 
 	            		this.ensemble[i].bkgLearner.internalWindowEvaluator.addResult(example, bkgVote.getArrayRef());
