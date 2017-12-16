@@ -53,20 +53,7 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
 
 	// Information about classifier that created the estimator
 	String createdBy; 
-    
-    // Specific constructor for Basic Classification Performance Evaluator (measures overall accuracy of the ensemble)
-    /*public DynamicWindowClassificationPerformanceEvaluator(boolean staticWindow) {
-    		if (staticWindow) {
-	    		this.windowSize = -1;
-	    		this.defaultSize =  -1;
-	    		this.windowIncrements = 0;
-	    		this.minWindowSize=-1;
-	    		this.decisionThreshold=-1.0;
-	    		this.backgroundDynamicWindows=false;
-	    		this.useOptions=false;
-    		} // else, dynamic window with option/parameters values
-    }*/
-    
+
     // Constructor for dynamic internal window evaluators
     public DynamicWindowClassificationPerformanceEvaluator(int windowSize, int windowIncrements, int minWindowSize, 
     		double priorEstimation, double decisionThreshold, boolean resizingEnabled, int windowResizePolicy, String createdBy) {
