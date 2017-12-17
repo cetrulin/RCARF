@@ -1,15 +1,22 @@
 package moa.evaluation;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map.Entry;
+import java.util.Set;
 
 import com.github.javacliparser.FloatOption;
 import com.github.javacliparser.IntOption;
 import com.yahoo.labs.samoa.instances.Instance;
 
+import apple.laf.JRSUIConstants.Size;
+import moa.classifiers.meta.RecurringConceptsAdaptiveRandomForest.Concept;
+import moa.classifiers.meta.RecurringConceptsAdaptiveRandomForest.ConceptHistory;
 import moa.core.Example;
 import moa.core.Measurement;
 import moa.core.Utils;
-import moa.evaluation.BasicClassificationPerformanceEvaluator.Estimator;
 
 import com.github.javacliparser.FlagOption;
 
@@ -25,6 +32,9 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
     private static final long serialVersionUID = 1L;
 	public static int dynamicEstimatorID = 0;
 
+	// First ensemble index pos (when the evaluator was created)
+	int indexPos;
+	
 	// Flags / Options
     public IntOption widthOption = new IntOption("width",'w', "Size of Window", 10);
     public IntOption defaultWidthOption = new IntOption("defaultWidth",'d', "Default Size of Window", 10);
@@ -36,7 +46,7 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
 
 	// Window properties
 	int windowSize;   
-	int defaultSize;
+	int defaultSize; // default size when the evaluator was created the first time (the first time its model drifted)
 	int windowIncrements;
 	int minWindowSize;
 	int windowResizePolicy;
@@ -44,6 +54,10 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
 	double priorEstimation;
 	boolean backgroundDynamicWindows;
 	boolean useOptions = true; // by default use options
+	
+	/*HashMap<Integer,Double> estimationBeforeWarning; // REMEMBER ITS 100-accuracy
+	HashMap<Integer,Integer> windowSizes; // supporting multiple models to access the same evaluator
+	HashMap<Integer,Integer> defaultSizes; // supporting multiple models to access the same evaluator*/
 	
 	// Variables for methods overrided
     private double totalWeightObserved;
@@ -56,41 +70,70 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
 
     // Constructor for dynamic internal window evaluators
     public DynamicWindowClassificationPerformanceEvaluator(int windowSize, int windowIncrements, int minWindowSize, 
-    		double priorEstimation, double decisionThreshold, boolean resizingEnabled, int windowResizePolicy, String createdBy) {
+    		double priorEstimation, double decisionThreshold, boolean resizingEnabled, int windowResizePolicy, int indexPos, String createdBy) {
     	
+    		// Initializing and adding values to HashMaps
+    		/*this.windowSizes = new HashMap<Integer,Integer>();
+    		this.windowSizes.put(indexPos, windowSize);
+
+    		this.defaultSizes = new HashMap<Integer,Integer>();
+    		this.defaultSizes.put(indexPos, windowSize);
+    		
+    		this.estimationBeforeWarning = new HashMap<Integer,Double>();
+    		this.estimationBeforeWarning.put(indexPos, priorEstimation);*/
+    		
+    		this.indexPos=indexPos;
+    	
+    		// First values
 		this.windowSize = windowSize; 
 		this.defaultSize =  windowSize;
+		this.priorEstimation = priorEstimation;
+
 		this.windowIncrements = windowIncrements;
 		this.minWindowSize=minWindowSize;
 		this.decisionThreshold=decisionThreshold;
 		this.backgroundDynamicWindows=resizingEnabled;
 		this.windowResizePolicy=windowResizePolicy;
-		this.priorEstimation = priorEstimation;
 		this.useOptions=false;
 		this.createdBy = createdBy;
     }
     
-    @Override
+    public void addModel(int indexPos, double priorEstimation, int windowSize) {
+		((DynamicWindowEstimator) this.weightCorrect).addNewModel(indexPos, priorEstimation, windowSize);
+    }
+    
+    public void deleteModel(int indexPos) {
+		((DynamicWindowEstimator) this.weightCorrect).deleteModel(indexPos);
+    }
+    
+    public boolean containsIndex(int indexPos) {
+    	
+    		return ((DynamicWindowEstimator) this.weightCorrect).contains(indexPos);
+    }
+        
+     @Override
     public void reset(){
 		this.windowSize =  this.defaultSize;
 	    reset(this.numClasses);
-	}
+	} 
 	
     // Overriding next few methods to avoid calculating extra evaluators for kappa statistics - @suarezcetrulo 
     
     @Override
     public void reset(int numClasses) {
         this.numClasses = numClasses;
-        this.weightCorrect = newEstimator();
+        this.weightCorrect = newEstimator(); // it will started from scratch for only one window size. 
+        // TODO. do we need to improve this to send the whole array of window sizes (from here) if we reset?
+        System.out.println("RESET ESTIMATOR ID: "+(dynamicEstimatorID+1));
         this.lastSeenClass = 0;
         this.totalWeightObserved = 0;
     }
     
     // Forcing memory cleaning 
-    public void emptyEstimator() {
+    /*public void emptyEstimator() {
     		((DynamicWindowEstimator) this.weightCorrect).clear();
     		this.weightCorrect = null;
-    }
+    }*/
 
     @Override
     public void addResult(Example<Instance> example, double[] classVotes) {
@@ -101,7 +144,7 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
             int predictedClass = Utils.maxIndex(classVotes);
             if (weight > 0.0) {
                 if (this.totalWeightObserved == 0) {
-                    reset(inst.dataset().numClasses());
+                    reset(inst.dataset().numClasses()); // are we using the correct one?
                 }
                 this.totalWeightObserved += weight;
                 this.weightCorrect.add(predictedClass == trueClass ? weight : 0);
@@ -120,6 +163,14 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
         };
     }
     
+    public double getFractionIncorrectlyClassified(int ensembleIndex) {
+        return 1.0 - getFractionCorrectlyClassified(ensembleIndex) ;
+    }
+    
+    public double getFractionCorrectlyClassified(int ensembleIndex) {
+        return ((DynamicWindowEstimator) this.weightCorrect).estimation(ensembleIndex);
+    }
+    
     // //////////////////////////////////////////////
     
 	public void clear(){
@@ -128,7 +179,7 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
 	
     // Getters and Setters
     
-    public void setProperties(int windowSize, int defaultSize, int windowIncrements, int minWindowSize, 
+    /*public void setProperties(int windowSize, int defaultSize, int windowIncrements, int minWindowSize, 
     							 double decisionThreshold, boolean resizingEnabled, int windowResizePolicy) {
 		this.windowSize = windowSize;
 		this.windowIncrements = windowIncrements;
@@ -138,15 +189,15 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
 		this.windowResizePolicy=windowResizePolicy;
 		this.defaultSize=defaultSize;
 		this.useOptions=false;
+    }*/
+    
+    public int getWindowSize(int ensembleIndex) {
+	 	return ((DynamicWindowEstimator) weightCorrect).getSize(ensembleIndex);
     }
     
-    public int getWindowSize() {
-	 	return ((DynamicWindowEstimator) weightCorrect).getSize();
-    }
-    
-    public void setWindowSize(int value) {
+    /*public void setWindowSize(int value) {
 	 	this.windowSize=value;
-    }
+    }*/
     
     
     @Override
@@ -158,13 +209,13 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
     			// When using the dynamic estimator as default one, there is no prior estimation (-1), so the only valid resizing policy is 2.
     	        return new DynamicWindowEstimator(this.widthOption.getValue(),this.widthIncrementsOption.getValue(), this.minWidthOption.getValue(), -1, 
     	        									 this.thresholdOption.getValue(), this.backgroundDynamicWindowsFlag.isSet(), 2,
-    	        									 DynamicWindowClassificationPerformanceEvaluator.dynamicEstimatorID);
+    	        									 DynamicWindowClassificationPerformanceEvaluator.dynamicEstimatorID, 0); // hard coding position in the ensemble = 0
     		}
     		else {  
-    			//System.out.println("START ESTIMATOR #"+dynamicEstimatorID+" "+this.createdBy);
+    			System.out.println("START ESTIMATOR #"+dynamicEstimatorID+" "+this.createdBy);
     	        return new DynamicWindowEstimator(this.windowSize, this.windowIncrements, this.minWindowSize, this.priorEstimation,
 	    	        								 this.decisionThreshold,this.backgroundDynamicWindows, this.windowResizePolicy, 
-	    	        								 DynamicWindowClassificationPerformanceEvaluator.dynamicEstimatorID);
+	    	        								 DynamicWindowClassificationPerformanceEvaluator.dynamicEstimatorID, this.indexPos);
     		}		
     }
     
@@ -182,60 +233,118 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
          // Window container of estimation values
          ArrayList<Double> window;  
 
-         // For static windows
-         protected double len;
-         protected double sum;
-		 
-         // Dynamic Windows
-		 protected int SizeWindow; // AS windowSize
+         // Dynamic Windows (both will always have the same length)
+		 protected HashMap<Integer,Integer> SizeWindows; // AS windowSize
+         protected HashMap<Integer,Integer> defaultSizes; 
+         
+         // Static parameters
          protected int minimumSize; 
-         protected int defaultSize; 
          protected int sizeIncrements; 
          protected int windowResizePolicy;
          protected boolean resizingEnabled;
          
          // Resizing decision factor
-         protected double priorEstimation; // prior error at the beginning of the warning window
+         protected HashMap<Integer,Double> priorEstimations; // prior error at the beginning of the warning window
          protected double threshold;
          
          // Constructor for window: threshold = -1 means that selected size update policy is 1
          public DynamicWindowEstimator(int initialSize, int sizeIncrements, int minSize, 
-        		 						  double priorEstimation, double threshold, boolean resizingEnabled, 
-        		 						  int windowResizePolicy, int estimatorID){
+        		 double priorEstimation, double threshold, boolean resizingEnabled, 
+        		 						  int windowResizePolicy, int estimatorID, int index){
         	 		//System.out.println("Creating estimator #"+estimatorID+" with Window size: "+initialSize);
+ 	 			//System.out.println("CREATE ESTIMATOR estimator #"+estimatorID+" with Window size: "+initialSize);
+      	 		System.out.println("CREATE ESTIMATOR "+estimatorID+" WITH INITIAL POS "+index);
+
+        	 		//System.out.println(index);
         	 		this.estimatorID = estimatorID;
-	     		this.SizeWindow = initialSize;
-	     		this.defaultSize = initialSize;
+        	 		
+        	 		// Initializing dynamic window
+    	     		this.window = new ArrayList<Double>();
+        	 		
+        	 		// Initializing and adding first value in HashMaps
+	     		this.SizeWindows= new HashMap<Integer,Integer>();
+	     		this.SizeWindows.put(index, initialSize);
+	     		
+	     		this.defaultSizes = new HashMap<Integer,Integer> ();
+	     		this.defaultSizes.put(index, initialSize);
+
+	     		this.priorEstimations = new HashMap<Integer,Double>();
+	     		this.priorEstimations.put(index, priorEstimation);
+	     		
+	     		// Initializing static values
 	     		this.sizeIncrements = sizeIncrements;
-	         	this.minimumSize = minSize;
+	         	this.minimumSize = minSize;          // minimum size should always be greater than size increments
 	     		this.threshold = threshold;
-	     		this.window = new ArrayList<Double>();
 	     		this.resizingEnabled=resizingEnabled;
-	     		this.priorEstimation=priorEstimation;
 	     		this.windowResizePolicy=windowResizePolicy; 
+         }
+         
+         public void addNewModel (int index, double priorEstimation, int windowSize) {
+     	 	System.out.println("ADD POS "+index+" IN ESTIMATOR "+estimatorID);
+        	 	this.SizeWindows.put(index, windowSize);
+        	 	this.defaultSizes.put(index, windowSize);
+        	 	this.priorEstimations.put(index, priorEstimation);
+         }
+         
+         public void deleteModel (int index) {
+        	 	System.out.println("DELETE POS "+index+" IN ESTIMATOR "+estimatorID);
+     	 	this.SizeWindows.remove(index);
+     	 	this.defaultSizes.remove(index);
+     	 	this.priorEstimations.remove(index);
+         }
+         
+         public boolean contains (int index) {
+        		return this.SizeWindows.containsKey(index);
          }
 
          // It adds errors per classified row
          public void add(double value) {
-        	 	// System.out.println("Estimator #"+this.estimatorID+":  Adding result: "+value+" - window size was:"+this.SizeWindow);
-  			// Remove oldest if it surpasses windowSize + increments
-         	if(window.size()>=(this.SizeWindow+this.sizeIncrements)) this.window.remove(0);
-
+        	 
+        	 	// TEST TRACE
+	        /*System.out.println("-------------------------------------------");
+	        System.out.println("SIZE: "+SizeWindows.size());
+	        	for (Entry<Integer, Integer> modelWindows : SizeWindows.entrySet()) {
+	        	 	System.out.println("pos: "+modelWindows.getKey()+" in estimator #"+this.estimatorID+":  Adding result: "+value+" - window size was:"+modelWindows.getValue());
+	         	System.out.println("pos: "+modelWindows.getKey()+" actual window is: "+getSublist(modelWindows.getValue())); //, this.sizeIncrements));
+	         	System.out.println("pos: "+modelWindows.getKey()+" small window is:"+getSublist(modelWindows.getValue()-this.sizeIncrements)); //, this.sizeIncrements*2));
+	        	}
+        	 	System.out.println("---");
+	        System.out.println("Complete-largest window is: "+this.window);
+     	 	System.out.println("---");*/
+     	 	// END TEST TRACE
+     	 	
+  			// Remove oldest if it surpasses the maximum windowSize + increments
+         	if(window.size()>=(Collections.max(this.SizeWindows.values())+this.sizeIncrements)) this.window.remove(0);
+         		         	
         	 	// Always storing extra results just in case the window grows
   			this.window.add(value);
-  			
-         	// Resize window -- this update window size here is designed for increments of 1 unit, 
-  			// as it is executed everytime one instance is created. 
-  			// Otherwise, the window could grow faster than the incoming data and be pointless. 
-  			// The single remove statement above also follows this.
-         	if (this.resizingEnabled) updateWindowSize(); 
-         	//System.out.println("After resizing, window size is:"+this.SizeWindow);
+	  		
+	        	for (Entry<Integer, Integer> modelWindows : SizeWindows.entrySet()) {
+	         	// Resize window -- this update window size here is designed for increments of 1 unit, 
+	  			// as it is executed every time one instance is created. 
+	  			// Otherwise, the window could grow faster than the incoming data and be pointless. 
+	  			// The single remove statement above also follows this.
+	         	if (this.resizingEnabled) updateWindowSize(modelWindows.getKey()); 
+	         	
+	  			// TEST TRACE
+	         	//System.out.println("// // // // (after resizing)");
+	         	//System.out.println("estimatorID: "+estimatorID+" pos: "+modelWindows.getKey()+" window size is:"+modelWindows.getValue());
+	         	/* System.out.println("pos: "+modelWindows.getKey()+" actual window is: "+getSublist(modelWindows.getValue())); //, this.sizeIncrements));
+	         	System.out.println("pos: "+modelWindows.getKey()+" small window is:"+getSublist(modelWindows.getValue()-this.sizeIncrements)); //, this.sizeIncrements*2));
+	         	System.out.println(); */
+	        	}
+        	 	/*System.out.println("---");
+        	 	System.out.println("Complete-largest window is: "+this.window);
+     	 	System.out.println("---");
+         	System.out.println("-------------------------------------------");*/
+     	 	// END TEST TRACE
+
          }
          
          // Returns the latest error window creating a sublist of the last errors.
          // As we store the plus last INCREMENT_SIZE errors, we need to start from the position INCREMENT_SIZE-1 (zero indexed)
          // Size of the sublist is WINDOW_SIZE 
-         public double estimation(){ // = getLastWindowEstimation
+         public double estimation(int pos){ // = getLastWindowEstimation
     	 		//if (this.window.size() == 0) return getLargeWindowEstimation ();
     	 		//else {
         	 		// Parameters for sublists
@@ -248,15 +357,27 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
 			        	 		), this.window.size()))));*/
         	 		//System.out.println("Error for estimator #"+this.estimatorID+": "+estimateError(getEstimationSublist(this.SizeWindow, this.sizeIncrements)));
         	 		//System.out.println(this.window.toString());
-        	 		// TODO: ADD COMMENTED PRINT TRACES AGAIN TO SHOW EVOLUTION OF MODEL. / MAYBE ADD SOMETHING ELSE THAT SHOWS CHANGES. IDEAS?
-        	 		return estimateError(getEstimationSublist(this.SizeWindow, this.sizeIncrements));
+        	 
+        	 		return estimateError(getSublist(this.SizeWindows.get(pos)));//, this.sizeIncrements));
     	 		//}
          }
-
          
-         public double getSmallerWindowEstimation (){
-        	 	return estimateError(getEstimationSublist(this.SizeWindow-this.sizeIncrements, this.sizeIncrements*2));
+         // gets estimation for only first element (default, it will work in bkg evaluators - but not old concepts)
+         public double estimation(){
+        	 	System.out.println("WARNING!!!!!! USING WRONG ESTIMATOR!!");
+ 	 		return estimateError(getSublist(this.SizeWindows.get(0))); //, this.sizeIncrements));
+ 	 		// TODO: DO WE ACTUALLY NEED THE DEFAULT ESTIMATOR? IS IT USED?
+        	 }
+
+         public double getSmallerWindowEstimation (int pos){
+        	 	return estimateError(getSublist(this.SizeWindows.get(pos)-this.sizeIncrements));//, this.sizeIncrements*2));
          }
+         
+         public double getLargeWindowEstimation (int pos){
+     			//return estimateError(this.window); // full window (with +1 increment)
+        	 		return estimateError(getSublist(this.SizeWindows.get(pos)+this.sizeIncrements));
+         }
+
          
  		/** EXPLANATION by @author suarezcetrulo:
  		 *  -End of sublist: we always finish in this.actualSize (as it's where the latest results are)
@@ -271,15 +392,12 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
  		 * @param generalStartPoint: this.sizeIncrements or this.sizeIncrements*2 (for smallerWindows)
  		 * @return sublist with the desired sub window
  		 */
-         public List<Double> getEstimationSublist(int desiredSize, int generalStartPoint){
-	        	 return this.window.subList((this.window.size() < desiredSize ? 
+         public List<Double> getSublist(int desiredSize){ //, int generalStartPoint){
+	        	 /*return this.window.subList((this.window.size() < desiredSize ? 
 							0 : (this.window.size() - generalStartPoint) < desiredSize ? 
 							this.window.size() % desiredSize : generalStartPoint 
-	     	 		), this.window.size()); 
-         }
-         
-         public double getLargeWindowEstimation (){
-     			return estimateError(this.window); // full window (with +1 increment)
+	     	 		), this.window.size()); */ // this was only good for a single dynamic window and not for multiple as now with the HashMaps	        	 
+	        	 return this.window.subList(Math.max(this.window.size() - desiredSize, 0), this.window.size());
          }
                  
          public double estimateError(List<Double> list) {
@@ -294,7 +412,7 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
          	  return sum;         	  
          }
         
-         public void updateWindowSize() {
+         public void updateWindowSize(int pos) {
         	 
     	 		switch(this.windowResizePolicy) {
     	 		
@@ -302,23 +420,26 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
              		// size update policy 0 [ min(error(c,w_c)) - priorError ] >= 0 -> window size increases
              		//if(priorError!=-1) { .. }
         	 			// working with accuracy results
-         			if(estimateError(getEstimationSublist(this.SizeWindow, this.sizeIncrements)) < this.priorEstimation)
-         				this.SizeWindow+=this.sizeIncrements;
+        	 			// TEST TRACES
+        	 			//System.out.println("estimatorID: "+this.estimatorID+" pos:"+pos+" currentEstimation is: "+estimation(pos));
+        	 			//System.out.println("estimatorID: "+this.estimatorID+" pos:"+pos+" active Model Estimation until Warning was: "+this.priorEstimations.get(pos));
+         			if(estimation(pos) < this.priorEstimations.get(pos))
+         				this.SizeWindows.put(pos,this.SizeWindows.get(pos)+this.sizeIncrements);
          			else // otherwise it decreases
-         				this.SizeWindow-=this.sizeIncrements;
-         				if(this.SizeWindow<=this.minimumSize) 
-         					this.SizeWindow=this.minimumSize;
+     					this.SizeWindows.put(pos,this.SizeWindows.get(pos)-this.sizeIncrements);
+         				if(this.SizeWindows.get(pos)<=this.minimumSize) 
+         					this.SizeWindows.put(pos,this.minimumSize);
          			break;
          			
         	 		case 1:
              		// size update policy 1 [ min(error(c,w_c)) - priorError ] > threshold -> window size increases
              		//if(priorError!=-1) { .. }
-         			if(estimation() - this.priorEstimation <= this.threshold)
-         				this.SizeWindow+=this.sizeIncrements;
+         			if(estimation(pos) - this.priorEstimations.get(pos) <= this.threshold)
+         				this.SizeWindows.put(pos,this.SizeWindows.get(pos)+this.sizeIncrements);
          			else // otherwise it decreases
-         				this.SizeWindow-=this.sizeIncrements;
-         				if(this.SizeWindow<this.minimumSize) 
-         					this.SizeWindow=this.minimumSize;
+     					this.SizeWindows.put(pos,this.SizeWindows.get(pos)-this.sizeIncrements);
+         				if(this.SizeWindows.get(pos)<this.minimumSize) 
+         					this.SizeWindows.put(pos,this.minimumSize);
          			break;
          			
         	 		case 2:
@@ -326,34 +447,34 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
         	 			//if(priorError==-1) { .. }
         	 			// -100 to work with error
         	 			// working with accuracy results
-             		double W_a_candidate_0=100-estimation(); // or  W_a_candidate_0=getAverageOfErrors(getLastWindow())
-             		double W_a_candidate_1=100-getLargeWindowEstimation();
-             		double W_a_candidate_2=100-getSmallerWindowEstimation ();
+             		double W_a_candidate_0=100-estimation(pos); // or  W_a_candidate_0=getAverageOfErrors(getLastWindow())
+             		double W_a_candidate_1=100-getLargeWindowEstimation(pos);
+             		double W_a_candidate_2=100-getSmallerWindowEstimation (pos);
         		
              		if ( W_a_candidate_1 > W_a_candidate_0 && W_a_candidate_1 > W_a_candidate_2 ) // Increase window size
-         				this.SizeWindow+=this.sizeIncrements;
+         				this.SizeWindows.put(pos,this.SizeWindows.get(pos)+this.sizeIncrements);
              		else if ( W_a_candidate_2 > W_a_candidate_0 && W_a_candidate_2 > W_a_candidate_1 ) // Decrease window size
-         				this.SizeWindow-=this.sizeIncrements;
-         				if(this.SizeWindow<this.minimumSize) 
-         					this.SizeWindow=this.minimumSize;
+     					this.SizeWindows.put(pos,this.SizeWindows.get(pos)-this.sizeIncrements);
+         				if(this.SizeWindows.get(pos)<this.minimumSize) 
+         					this.SizeWindows.put(pos,this.minimumSize);
                    //else System.out.println("Window size remains the same");
         	 			break;
         	 		  // no default case
     	 		}		
          }
          
-         
-         public void reset() {
+         public void reset(int pos) {
          		this.window.clear();
-         		this.SizeWindow=defaultSize;
+         		this.SizeWindows.put(pos,defaultSize);
          }
          
-         public void clear() {
+         // Clean full window
+         /* public void clear() {
          		this.window.clear();
-         }
+         }*/
          
-         public int getSize() {
-        	 	return this.SizeWindow;
+         public int getSize(int pos) {
+        	 	return this.SizeWindows.get(pos);
          }
 
     }
