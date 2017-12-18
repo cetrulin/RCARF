@@ -527,7 +527,7 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
                         
 	    				   // 1 Update last error and make a backup of the current classifier in a concept object (the active one will be in use until the Drift is confirmed). 
                         // As there is no false alarms explicit mechanism (bkgLeaners keep running till replaced), this has been moved here.
-                        if(this.useRecurringLearner) updateBeforeWarning();
+                        if(this.useRecurringLearner) saveCurrentConcept();
 	                	   
 	                	   // 2 Start warning window to create bkg learner and retrieve old models (if option enabled)
                         startWarningWindow();
@@ -548,26 +548,22 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
         } 
         
         // Saves a backup of the active model that raised a warning to be stored in the concept history in case of drift.
-        public void updateBeforeWarning() {  
+        public void saveCurrentConcept() {  
+        		if(ConceptHistory.historyList != null) System.out.println("CONCEPT HISTORY SIZE IS: "+ConceptHistory.historyList.size());
+        	
         		// 1 Update last error before warning of the active classifier
         		// This error is the total fraction of examples incorrectly classified since this model was active until now.
     			this.lastError = this.evaluator.getFractionIncorrectlyClassified();  
-    			
-   			// 2 Create an internal evaluator for the Concept History
-   			DynamicWindowClassificationPerformanceEvaluator tmpInternalWindow = new DynamicWindowClassificationPerformanceEvaluator(
-   				this.windowProperties.getSize(), this.windowProperties.getIncrements(), this.windowProperties.getMinSize(),
-        			this.lastError, this.windowProperties.getDecisionThreshold(),
-        			this.windowProperties.getDynamicWindowInOldModelsFlag(), this.windowProperties.getResizingPolicy(),
-        			this.indexOriginal, "created for old-retrieved classifier in ensembleIndex #"+this.indexOriginal);  	
-   			tmpInternalWindow.reset();        			
-    			
-    			// 3 Copy Base learner for Concept History in case of Drift and store it on temporal object.
+       			    			
+    			// 2 Copy Base learner for Concept History in case of Drift and store it on temporal object.
+    			// First, the internal evaluator will be null. 
+    			// It doesn't get initialized till once in the Concept History and the first warning arises. See it in startWarningWindow
     			RCARFBaseLearner tmpConcept = new RCARFBaseLearner(this.indexOriginal, 
     					(ARFHoeffdingTree) this.classifier.copy(), (BasicClassificationPerformanceEvaluator) this.evaluator.copy(), 
     					this.createdOn, this.useBkgLearner, this.useDriftDetector, this.driftOption, this.warningOption, 
-    					true, this.useRecurringLearner, true, this.windowProperties.copy(), tmpInternalWindow);
-    			// TODO: do I need to reset anything?   
-	    		this.tmpCopyOfModel = new Concept(tmpConcept, 
+    					true, this.useRecurringLearner, true, this.windowProperties.copy(), null);
+
+    			this.tmpCopyOfModel = new Concept(tmpConcept, 
 	    				this.createdOn, this.evaluator.getPerformanceMeasurements()[0].getValue(), this.lastWarningOn);
 	    		
 	    		// 3 Add the model accumulated error (from the start of the model) from the iteration before the warning
@@ -587,11 +583,26 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
         		ConceptHistory.modelsOnWarning.put(this.indexOriginal, true);
             if(ConceptHistory.historyList != null && ConceptHistory.historyList.size() > 0) {
 		        	for (Concept oldModel : ConceptHistory.historyList.values()) {
-		        		((DynamicWindowClassificationPerformanceEvaluator) 
-		        			oldModel.ConceptLearner.internalWindowEvaluator).addModel(this.indexOriginal,this.lastError,this.windowProperties.windowSize);
+		        		// If the concept internal evaluator has been initialized for any other model on warning, add window size and last error of current model on warning 
+		        		if (oldModel.ConceptLearner.internalWindowEvaluator != null) {
+		        			System.out.println("ADDING VALUESTO INTERNAL EVALUATOR OF CONCEPT "+oldModel.historyIndex+" IN POS "+this.indexOriginal);
+			        		((DynamicWindowClassificationPerformanceEvaluator) 
+			        			oldModel.ConceptLearner.internalWindowEvaluator).addModel(this.indexOriginal,this.lastError,this.windowProperties.windowSize);
+		        		} 
+		        		// Otherwise, initialize a new internal evaluator for the concept
+		        		else {
+		        			System.out.println("INSTANCIATING FOR THE FIRST TIME INTERNAL EVALUATOR FOR CONCEPT "+oldModel.historyIndex+" IN POS "+this.indexOriginal);
+	           			DynamicWindowClassificationPerformanceEvaluator tmpInternalWindow = new DynamicWindowClassificationPerformanceEvaluator(
+	           				this.windowProperties.getSize(), this.windowProperties.getIncrements(), this.windowProperties.getMinSize(),
+	                			this.lastError, this.windowProperties.getDecisionThreshold(),
+	                			this.windowProperties.getDynamicWindowInOldModelsFlag(), this.windowProperties.getResizingPolicy(),
+	                			this.indexOriginal, "created for old-retrieved classifier in ensembleIndex #"+this.indexOriginal);  	
+	           			tmpInternalWindow.reset(); 
+	           			
+	           			oldModel.ConceptLearner.internalWindowEvaluator = tmpInternalWindow;
+		        		}
 		        	}
             } System.out.println("WARNING ON IN MODEL #"+this.indexOriginal+". Warning flag status (activeModelPos, Flag): "+ConceptHistory.modelsOnWarning);
-
         		
             // 2 Create background Model
             createBkgModel();
@@ -603,6 +614,9 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
         
         // Creates BKG Model in warning window
         public void createBkgModel() {
+        		// Empty explicitely the BKG internal evaluator if enabled
+        		//if (this.bkgLearner != null) this.bkgLearner.internalWindowEvaluator.clear(); // I don't see any improvement
+        	
             // 1 Create a new bkgTree classifier
             ARFHoeffdingTree bkgClassifier = (ARFHoeffdingTree) this.classifier.copy();
             bkgClassifier.resetLearning();
