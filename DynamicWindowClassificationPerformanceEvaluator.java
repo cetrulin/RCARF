@@ -1,19 +1,14 @@
 package moa.evaluation;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map.Entry;
-import java.util.Set;
 
 import com.github.javacliparser.FloatOption;
 import com.github.javacliparser.IntOption;
 import com.yahoo.labs.samoa.instances.Instance;
 
-import apple.laf.JRSUIConstants.Size;
-import moa.classifiers.meta.RecurringConceptsAdaptiveRandomForest.Concept;
-import moa.classifiers.meta.RecurringConceptsAdaptiveRandomForest.ConceptHistory;
 import moa.core.Example;
 import moa.core.Measurement;
 import moa.core.Utils;
