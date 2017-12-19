@@ -474,12 +474,9 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
             System.out.println("-------------------------------------------------");
             System.out.println();
 		   // 2 Transition to the best bkg or retrieved old learner
- 		   // 2.1 Compare DT results using Window method and pick the best one between concept history and bkg model.
- 		   // It returns the best model in the object of the bkgLearner
-            if (this.useRecurringLearner && this.useBkgLearner)  selectNewActiveModel();
         		if (this.useBkgLearner && this.bkgLearner != null) {
         		   if(this.useRecurringLearner) { // && ConceptHistory.historyList != null && ConceptHistory.historyList.size() > 0) {
-       	           // 2.2 Move copy of active model made before warning to Concept History. Its history ID will be the last one in the history (= size)
+       	           // 2.1 Move copy of active model made before warning to Concept History. Its history ID will be the last one in the history (= size)
         			   // Clean the copy afterwards.
         			   this.tmpCopyOfModel.addHistoryID(ConceptHistory.nextID());
         			   ConceptHistory.historyList.put(this.tmpCopyOfModel.historyIndex, this.tmpCopyOfModel);
@@ -489,11 +486,11 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
         			   // If it becomes necessary in terms of implementation for this concept, to be considered immediately by the other examples in warning,
         			   // we could have a HashMap in ConceptHistory with a flag saying if a given ensembleIndexPos needs to check the ConceptHistory again and add window sizes and priorError.
         		   }
-                // 2.3 Update window size in window properties depending on window size inheritance flag (entry parameter/Option)
+                // 2.2 Update window size in window properties depending on window size inheritance flag (entry parameter/Option)
     	            this.bkgLearner.windowProperties.setSize(((this.bkgLearner.windowProperties.rememberWindowSize) ? 
                 		this.bkgLearner.internalWindowEvaluator.getWindowSize(this.bkgLearner.indexOriginal) : this.bkgLearner.windowProperties.windowDefaultSize)); 
 	            
-	            // 2.4 New active model is the best retrieved old model
+	            // 2.3 New active model is the best retrieved old model
                 this.windowProperties=this.bkgLearner.windowProperties; // internalEvaluator shouldnt be inherited
                 this.classifier = this.bkgLearner.classifier;
                 this.driftDetectionMethod = this.bkgLearner.driftDetectionMethod;
@@ -501,7 +498,7 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
                 this.evaluator = this.bkgLearner.evaluator;
                 this.createdOn = this.bkgLearner.createdOn; 
                 
-                // 2.5 Clear remove background and old learners 
+                // 2.4 Clear remove background and old learners 
             		this.bkgLearner = null; 
             		this.internalWindowEvaluator = null; // only a double check, as it should be always null (only used in background + old concept Learners)
         		} 
@@ -552,7 +549,11 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
                     this.lastDriftOn = instancesSeen;
                     this.numberOfDriftsDetected++;
 
-	        		   //  Transition to new model
+          		   // 1 Compare DT results using Window method and pick the best one between concept history and bkg model.
+          		   // It returns the best model in the object of the bkgLearner
+                     if (this.useRecurringLearner)  selectNewActiveModel();
+                    
+	        		   // 2 Transition to new model
                     this.reset();
                 } 
             } 
@@ -678,12 +679,11 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 	    		
 	    		// If there are no available choices, the new active model will be the background one. Each bkg model has its own learner.
     			if(ranking.size()>0) {
-    				System.out.println("Ranking size is greater than 0");
 		    		// 2 Compare this against the background model 
 		    		if(Collections.min(ranking.values())<=((DynamicWindowClassificationPerformanceEvaluator) 
 							this.bkgLearner.internalWindowEvaluator).getFractionIncorrectlyClassified(this.bkgLearner.indexOriginal)){
-		        		System.out.println(ranking.size()); // TODO: debugging
-		        		System.out.println(getMinKey(ranking)); // TODO: debugging
+		        		//System.out.println(ranking.size()); // TODO: debugging
+		        		//System.out.println(getMinKey(ranking)); // TODO: debugging
 		        		// Extracts best recurring learner form concept history. It no longer exists in the concept history
 		        		this.bkgLearner=ConceptHistory.extractConcept(getMinKey(ranking));
 	    	            System.out.println("RECURRING DRIFT RESET IN MODEL #"+this.indexOriginal+" TO MODEL #"+this.bkgLearner.indexOriginal);   
@@ -692,11 +692,11 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 		    					Collections.min(ranking.values())+" is not better than the bbk learner one: "+
 		    					((DynamicWindowClassificationPerformanceEvaluator) 
 		    							this.bkgLearner.internalWindowEvaluator).getFractionIncorrectlyClassified(this.bkgLearner.indexOriginal));
-	    	            System.out.println("DRIFT RESET IN MODEL #"+this.indexOriginal+" TO NEW MODEL #"+this.bkgLearner.indexOriginal); 
+	    	            System.out.println("DRIFT RESET IN MODEL #"+this.indexOriginal+" TO NEW BKG MODEL #"+this.bkgLearner.indexOriginal); 
 		    		}
     			} else {
-    				System.out.println("0 available concepts in concept history.");
-    	            System.out.println("DRIFT RESET IN MODEL #"+this.indexOriginal+" TO NEW MODEL #"+this.bkgLearner.indexOriginal); 
+    				System.out.println("0 applicable concepts for model  #"+this.indexOriginal+" in concept history.");
+    	            System.out.println("DRIFT RESET IN MODEL #"+this.indexOriginal+" TO NEW BKG MODEL #"+this.bkgLearner.indexOriginal); 
     			}
         }
         

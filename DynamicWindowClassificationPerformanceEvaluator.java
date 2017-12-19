@@ -116,7 +116,7 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
     public void reset(int numClasses) {
         this.numClasses = numClasses;
         this.weightCorrect = newEstimator(); // it will started from scratch for only one window size. 
-        System.out.println("RESET ESTIMATOR ID: "+(dynamicEstimatorID+1)+" "+createdBy+" "+" pos:"+this.indexPos);
+        // System.out.println("RESET ESTIMATOR ID: "+(dynamicEstimatorID+1)+" "+createdBy+" "+" pos:"+this.indexPos);
         this.lastSeenClass = 0;
         this.totalWeightObserved = 0;
     }
