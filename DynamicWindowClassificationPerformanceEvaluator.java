@@ -89,6 +89,10 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
     		return ((DynamicWindowEstimator) this.weightCorrect).contains(indexPos);
     }
     
+    public int getAmountOfApplicableModels() {
+	 	return ((DynamicWindowEstimator) this.weightCorrect).getAmountOfApplicableModels();
+    }
+    
 	/*public void clear(){
 		((DynamicWindowEstimator) this.weightCorrect).clear();
 		this.weightCorrect = null;
@@ -167,7 +171,7 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
     	        									 DynamicWindowClassificationPerformanceEvaluator.dynamicEstimatorID, 0); // hard coding position in the ensemble = 0
     		}
     		else {  
-    			System.out.println("START ESTIMATOR #"+dynamicEstimatorID+" "+this.createdBy);
+    			//System.out.println("START ESTIMATOR #"+dynamicEstimatorID+" "+this.createdBy);
     	        return new DynamicWindowEstimator(this.windowSize, this.windowIncrements, this.minWindowSize, this.priorEstimation,
 	    	        								 this.decisionThreshold,this.backgroundDynamicWindows, this.windowResizePolicy, 
 	    	        								 DynamicWindowClassificationPerformanceEvaluator.dynamicEstimatorID, this.indexPos);
@@ -208,7 +212,7 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
         		 						  int windowResizePolicy, int estimatorID, int index){
         	 		//System.out.println("Creating estimator #"+estimatorID+" with Window size: "+initialSize);
  	 			//System.out.println("CREATE ESTIMATOR estimator #"+estimatorID+" with Window size: "+initialSize);
-      	 		System.out.println("CREATE ESTIMATOR "+estimatorID+" WITH INITIAL POS "+index);
+      	 		//System.out.println("CREATE ESTIMATOR "+estimatorID+" WITH INITIAL POS "+index);
 
         	 		//System.out.println(index);
         	 		this.estimatorID = estimatorID;
@@ -234,15 +238,19 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
 	     		this.windowResizePolicy=windowResizePolicy; 
          }
          
+         public int getAmountOfApplicableModels() {
+        	 	return this.SizeWindows.size();
+         }
+         
          public void addNewModel (int index, double priorEstimation, int windowSize) {
-     	 	System.out.println("ADD POS "+index+" IN ESTIMATOR "+estimatorID);
+     	 	//System.out.println("ADD APPLICABLE MODEL "+index+" IN ESTIMATOR "+estimatorID);
         	 	this.SizeWindows.put(index, windowSize);
         	 	this.defaultSizes.put(index, windowSize);
         	 	this.priorEstimations.put(index, priorEstimation);
          }
          
          public void deleteModel (int index) {
-        	 	System.out.println("DELETE POS "+index+" IN ESTIMATOR "+estimatorID);
+        	 	//System.out.println("DELETE APPLICABLE MODEL "+index+" IN ESTIMATOR "+estimatorID);
      	 	this.SizeWindows.remove(index);
      	 	this.defaultSizes.remove(index);
      	 	this.priorEstimations.remove(index);
@@ -258,9 +266,9 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
          
          // It adds errors per classified row
          public void add(double value) {
-        	 
+        	    
         	 	// TEST TRACE
-	        System.out.println("-------------------------------------------");
+	        /*System.out.println("-------------------------------------------");
 	        System.out.println("SIZE: "+SizeWindows.size());
 	        	for (Entry<Integer, Integer> modelWindows : SizeWindows.entrySet()) {
 	        	 	System.out.println("pos: "+modelWindows.getKey()+" in estimator #"+this.estimatorID+":  Adding result: "+value+" - window size was:"+modelWindows.getValue());
@@ -269,14 +277,18 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
 	        	}
         	 	System.out.println("---");
 	        System.out.println("Complete-largest window is: "+this.window);
-     	 	System.out.println("---");
-     	 	// END TEST TRACE
-     	 	
-  			// Remove oldest if it surpasses the maximum windowSize + increments
-         	if(window.size()>=(Collections.max(this.SizeWindows.values())+this.sizeIncrements)) this.window.remove(0);
-         		         	
+     	 	System.out.println("---"); 	 	
+        	 	System.out.println("-- WINDOWS SIZE IS: "+window.size()+" THERE ARE "+SizeWindows.size()+" APPLICABLE MODELS");
+     	 	System.out.println("-- APPLICABLE MODELS ARE: "+SizeWindows.keySet()+" AND THEIR SIZES ARE "+SizeWindows.values());
+     	 	System.out.println("-- SO MAX WINDOW SIZE IS: "+Collections.max(this.SizeWindows.values())+" + WINDOWS_INCREMENT = FULL WINDOW(?)");*/
+      	 	// END TEST TRACE
+
         	 	// Always storing extra results just in case the window grows
-  			this.window.add(value);
+			this.window.add(value);
+			
+  			// Remove oldest if it surpasses the maximum windowSize + increments. Also allow it to grow at the start till the minimum size if the default size is lower than this.
+         	if(this.window.size()>=(Math.max((Collections.max(this.SizeWindows.values())+this.sizeIncrements), this.minimumSize))) 
+         		this.window.remove(0);
 	  		
 	        	for (Entry<Integer, Integer> modelWindows : SizeWindows.entrySet()) {
 	         	// Resize window -- this update window size here is designed for increments of 1 unit, 
@@ -287,15 +299,15 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
 	         	
 	  			// TEST TRACE
 	         	//System.out.println("// // // // (after resizing)");
-	         	System.out.println("estimatorID: "+estimatorID+" pos: "+modelWindows.getKey()+" window size is:"+modelWindows.getValue());
+	         	//System.out.println("estimatorID: "+estimatorID+" pos: "+modelWindows.getKey()+" window size is:"+modelWindows.getValue());
 	         	/* System.out.println("pos: "+modelWindows.getKey()+" actual window is: "+getSublist(modelWindows.getValue())); //, this.sizeIncrements));
 	         	System.out.println("pos: "+modelWindows.getKey()+" small window is:"+getSublist(modelWindows.getValue()-this.sizeIncrements)); //, this.sizeIncrements*2));
 	         	System.out.println(); */
 	        	}
-        	 	System.out.println("---");
+        	 	/*System.out.println("---");
         	 	System.out.println("Complete-largest window is: "+this.window);
      	 	System.out.println("---");
-         	System.out.println("-------------------------------------------");
+         	System.out.println("-------------------------------------------");*/
      	 	// END TEST TRACE
 
          }
@@ -312,7 +324,10 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
  	 		return estimateError(getSublist(this.SizeWindows.get(0))); 
         	 }
 
-         public double getSmallerWindowEstimation (int pos){
+         public double getSmallerWindowEstimation (int pos){ 
+        	 // TODO: this reduces the window to minimum size - 1 (for sizeIncrementes=1).
+        	 // this only affects to the third policy (policy value = 2).
+        	 // tests can be run anyway, just bearing on mind that the smallerWindow wont respect this size (dont set minimum at 1 if selecting third policy)
         	 	return estimateError(getSublist(this.SizeWindows.get(pos)-this.sizeIncrements));
          }
          
@@ -351,21 +366,33 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
         	 			//System.out.println("estimatorID: "+this.estimatorID+" pos:"+pos+" active Model Estimation until Warning was: "+this.priorEstimations.get(pos));
          			if(estimation(pos) < this.priorEstimations.get(pos))
          				this.SizeWindows.put(pos,this.SizeWindows.get(pos)+this.sizeIncrements);
-         			else // otherwise it decreases
+         			else { // otherwise it decreases
      					this.SizeWindows.put(pos,this.SizeWindows.get(pos)-this.sizeIncrements);
-         				if(this.SizeWindows.get(pos)<=this.minimumSize) 
+         				if(this.SizeWindows.get(pos)<this.minimumSize) 
          					this.SizeWindows.put(pos,this.minimumSize);
+         				else { //if window size is greater than minimum size, the evaluator is decreasing size and its the maximum size model, we delete a value in the window
+         					if (this.SizeWindows.get(pos) == Collections.max(this.SizeWindows.values())){
+         						for(int n = 1; n <= this.sizeIncrements ; n++) this.window.remove(0); // we do it as many times as values we insert per time (sizeIncrements)
+         					}
+         				}
+         			}
          			break;
-         			
+         		// TODO: POLICIES 1 AND 2 STILL NEED TESTING	
         	 		case 1:  // working with ERRROR 
              		// size update policy 1 [ min(error(c,w_c)) - priorError ] > threshold -> window size increases
              		//if(priorError!=-1) { .. }
          			if(estimation(pos) - this.priorEstimations.get(pos) <= this.threshold)
          				this.SizeWindows.put(pos,this.SizeWindows.get(pos)+this.sizeIncrements);
-         			else // otherwise it decreases
+         			else {// otherwise it decreases
      					this.SizeWindows.put(pos,this.SizeWindows.get(pos)-this.sizeIncrements);
          				if(this.SizeWindows.get(pos)<this.minimumSize) 
          					this.SizeWindows.put(pos,this.minimumSize);
+         				else { //if window size is greater than minimum size, it is decreasing size and its the maximum size model, we delete a value in the window to free space
+         					if (this.SizeWindows.get(pos) == Collections.max(this.SizeWindows.values())){
+         						for(int n = 1; n <= this.sizeIncrements ; n++) this.window.remove(0); // we do it as many times as values we insert per time (sizeIncrements)
+         					}
+         				}
+         			}
          			break;
          			
         	 		case 2:  // working with ACCURACY 
@@ -377,10 +404,16 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
         		
              		if ( W_a_candidate_1 > W_a_candidate_0 && W_a_candidate_1 > W_a_candidate_2 ) // Increase window size
          				this.SizeWindows.put(pos,this.SizeWindows.get(pos)+this.sizeIncrements);
-             		else if ( W_a_candidate_2 > W_a_candidate_0 && W_a_candidate_2 > W_a_candidate_1 ) // Decrease window size
+             		else if ( W_a_candidate_2 > W_a_candidate_0 && W_a_candidate_2 > W_a_candidate_1 ) { // Decrease window size
      					this.SizeWindows.put(pos,this.SizeWindows.get(pos)-this.sizeIncrements);
          				if(this.SizeWindows.get(pos)<this.minimumSize) 
          					this.SizeWindows.put(pos,this.minimumSize);
+         				else { //if window size is greater than minimum size, it is decreasing size and its the maximum size model, we delete a value in the window
+         					if (this.SizeWindows.get(pos) == Collections.max(this.SizeWindows.values())){
+         						for(int n = 1; n <= this.sizeIncrements ; n++) this.window.remove(0); // we do it as many times as values we insert per time (sizeIncrements)
+         					}
+         				}
+             		}
         	 			break;
     	 		}		
          }

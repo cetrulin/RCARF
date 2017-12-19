@@ -210,7 +210,11 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 	        	for (Concept oldModel : ConceptHistory.historyList.values()) { // TODO: test this
 	            DoubleVector oldModelVote = new DoubleVector(oldModel.ConceptLearner.getVotesForInstance(instance)); // TODO. this
 	            // System.out.println("Im classifier number #"+oldModel.Concept.classifier.calcByteSize()+" created on: "+oldModel.Concept.createdOn+"  and last error was:  "+oldModel.Concept.lastError);
-	        		oldModel.ConceptLearner.internalWindowEvaluator.addResult(new InstanceExample(instance), oldModelVote.getArrayRef()); // TODO: test this
+        			if (oldModel.ConceptLearner.internalWindowEvaluator != null && 
+        					oldModel.ConceptLearner.internalWindowEvaluator.getAmountOfApplicableModels() > 0) { // When the concept is added the first time, it doesn't have applicable models. They are not inserted until the first warning. 
+        				// So the Concept History only runs over warning windows
+        				oldModel.ConceptLearner.internalWindowEvaluator.addResult(new InstanceExample(instance), oldModelVote.getArrayRef()); // TODO: test this
+        			}
 	        	}
         } // else System.out.println("No models on warning");
         // TODO: add print here to show how many warnings are active each X iterations. We could also record drifts. THIS IS DONE IN RESET
@@ -458,22 +462,29 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 			ConceptHistory.modelsOnWarning.put(this.indexOriginal, false);
             if(ConceptHistory.historyList != null && ConceptHistory.historyList.size() > 0) {
 		        	for (Concept oldModel : ConceptHistory.historyList.values()) {
-		        		((DynamicWindowClassificationPerformanceEvaluator) 
-		        			oldModel.ConceptLearner.internalWindowEvaluator).deleteModel(this.indexOriginal);
+		        		if (oldModel.ConceptLearner.internalWindowEvaluator != null && 
+		        				oldModel.ConceptLearner.internalWindowEvaluator.containsIndex(this.indexOriginal) )
+			        		((DynamicWindowClassificationPerformanceEvaluator) 
+			        			oldModel.ConceptLearner.internalWindowEvaluator).deleteModel(this.indexOriginal);
 		        	}
-            } System.out.println("RESET (WARNING OFF) IN MODEL #"+this.indexOriginal+". Warning flag status (activeModelPos, Flag): "+ConceptHistory.modelsOnWarning);
-			
-			// 2 Transition to the best bkg or retrieved old learner
+            } 
+            System.out.println();
+            System.out.println("-------------------------------------------------");
+            System.out.println("RESET (WARNING OFF) IN MODEL #"+this.indexOriginal+". Warning flag status (activeModelPos, Flag): "+ConceptHistory.modelsOnWarning);
+            System.out.println("-------------------------------------------------");
+            System.out.println();
+		   // 2 Transition to the best bkg or retrieved old learner
+ 		   // 2.1 Compare DT results using Window method and pick the best one between concept history and bkg model.
+ 		   // It returns the best model in the object of the bkgLearner
+            if (this.useRecurringLearner && this.useBkgLearner)  selectNewActiveModel();
         		if (this.useBkgLearner && this.bkgLearner != null) {
-        		   if(this.useRecurringLearner && ConceptHistory.historyList != null && ConceptHistory.historyList.size() > 0) {
-            		   // 2.1 Compare DT results using Window method and pick the best one between concept history and bkg model.
-            		   // It returns the best model in the object of the bkgLearner
-        			   selectNewActiveModel();
+        		   if(this.useRecurringLearner) { // && ConceptHistory.historyList != null && ConceptHistory.historyList.size() > 0) {
        	           // 2.2 Move copy of active model made before warning to Concept History. Its history ID will be the last one in the history (= size)
         			   // Clean the copy afterwards.
         			   this.tmpCopyOfModel.addHistoryID(ConceptHistory.nextID());
         			   ConceptHistory.historyList.put(this.tmpCopyOfModel.historyIndex, this.tmpCopyOfModel);
         			   this.tmpCopyOfModel = null;
+        			   //System.out.println("MODEL ADDED TO CONCEPT HISTORY!");
         			   // Consideration *: This classifier is added to the concept history, but it wont be considered by other classifiers on warning until their next warning.
         			   // If it becomes necessary in terms of implementation for this concept, to be considered immediately by the other examples in warning,
         			   // we could have a HashMap in ConceptHistory with a flag saying if a given ensembleIndexPos needs to check the ConceptHistory again and add window sizes and priorError.
@@ -549,7 +560,7 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
         
         // Saves a backup of the active model that raised a warning to be stored in the concept history in case of drift.
         public void saveCurrentConcept() {  
-        		if(ConceptHistory.historyList != null) System.out.println("CONCEPT HISTORY SIZE IS: "+ConceptHistory.historyList.size());
+        		// if(ConceptHistory.historyList != null) System.out.println("CONCEPT HISTORY SIZE IS: "+ConceptHistory.historyList.size());
         	
         		// 1 Update last error before warning of the active classifier
         		// This error is the total fraction of examples incorrectly classified since this model was active until now.
@@ -585,13 +596,13 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 		        	for (Concept oldModel : ConceptHistory.historyList.values()) {
 		        		// If the concept internal evaluator has been initialized for any other model on warning, add window size and last error of current model on warning 
 		        		if (oldModel.ConceptLearner.internalWindowEvaluator != null) {
-		        			System.out.println("ADDING VALUESTO INTERNAL EVALUATOR OF CONCEPT "+oldModel.historyIndex+" IN POS "+this.indexOriginal);
+		        			//System.out.println("ADDING VALUES TO INTERNAL EVALUATOR OF CONCEPT "+oldModel.historyIndex+" IN POS "+this.indexOriginal);
 			        		((DynamicWindowClassificationPerformanceEvaluator) 
 			        			oldModel.ConceptLearner.internalWindowEvaluator).addModel(this.indexOriginal,this.lastError,this.windowProperties.windowSize);
 		        		} 
 		        		// Otherwise, initialize a new internal evaluator for the concept
 		        		else {
-		        			System.out.println("INSTANCIATING FOR THE FIRST TIME INTERNAL EVALUATOR FOR CONCEPT "+oldModel.historyIndex+" IN POS "+this.indexOriginal);
+		        			//System.out.println("INSTANCIATING FOR THE FIRST TIME INTERNAL EVALUATOR FOR CONCEPT "+oldModel.historyIndex+" IN POS "+this.indexOriginal);
 	           			DynamicWindowClassificationPerformanceEvaluator tmpInternalWindow = new DynamicWindowClassificationPerformanceEvaluator(
 	           				this.windowProperties.getSize(), this.windowProperties.getIncrements(), this.windowProperties.getMinSize(),
 	                			this.lastError, this.windowProperties.getDecisionThreshold(),
@@ -602,8 +613,14 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 	           			oldModel.ConceptLearner.internalWindowEvaluator = tmpInternalWindow;
 		        		}
 		        	}
-            } System.out.println("WARNING ON IN MODEL #"+this.indexOriginal+". Warning flag status (activeModelPos, Flag): "+ConceptHistory.modelsOnWarning);
-        		
+            } 
+            System.out.println();
+            System.out.println("-------------------------------------------------");
+            System.out.println("WARNING ON IN MODEL #"+this.indexOriginal+". Warning flag status (activeModelPos, Flag): "+ConceptHistory.modelsOnWarning);
+            System.out.println("CONCEPT HISTORY STATE AND APPLICABLE FROM THIS WARNING IS: "+ConceptHistory.historyList.keySet().toString());
+            System.out.println("-------------------------------------------------");
+            System.out.println();
+
             // 2 Create background Model
             createBkgModel();
 
@@ -651,7 +668,8 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
         		// Concept History owns only one learner per historic concept. But each learner saves all model's independent window size and priorEstimation in a HashMap.
 	    		for (Concept auxConcept : ConceptHistory.historyList.values()) 
 	    			// Only take into consideration Concepts sent to the Concept History after the current model raised a warning (see this consideration in reset*) 
-	    			if (auxConcept.ConceptLearner.internalWindowEvaluator.containsIndex(this.indexOriginal))
+	    			if (auxConcept.ConceptLearner.internalWindowEvaluator != null && 
+	    					auxConcept.ConceptLearner.internalWindowEvaluator.containsIndex(this.indexOriginal))
 		    			ranking.put(auxConcept.getHistoryIndex(), ((DynamicWindowClassificationPerformanceEvaluator) 
 		    					auxConcept.ConceptLearner.internalWindowEvaluator).getFractionIncorrectlyClassified(this.indexOriginal));
 		    		
@@ -660,10 +678,11 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 	    		
 	    		// If there are no available choices, the new active model will be the background one. Each bkg model has its own learner.
     			if(ranking.size()>0) {
+    				System.out.println("Ranking size is greater than 0");
 		    		// 2 Compare this against the background model 
 		    		if(Collections.min(ranking.values())<=((DynamicWindowClassificationPerformanceEvaluator) 
 							this.bkgLearner.internalWindowEvaluator).getFractionIncorrectlyClassified(this.bkgLearner.indexOriginal)){
-		        		//System.out.println(ranking.size()); // TODO: debugging
+		        		System.out.println(ranking.size()); // TODO: debugging
 		        		System.out.println(getMinKey(ranking)); // TODO: debugging
 		        		// Extracts best recurring learner form concept history. It no longer exists in the concept history
 		        		this.bkgLearner=ConceptHistory.extractConcept(getMinKey(ranking));
