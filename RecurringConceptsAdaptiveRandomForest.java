@@ -309,6 +309,7 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
   
         // Only initialize Concept History if explicit recurring concepts handling is enabled
         if(!this.disableRecurringDriftDetectionOption.isSet()) {
+			ConceptHistory.lastID = 0;
 			ConceptHistory.historyList = new ConcurrentHashMap<Integer,Concept> ();
 			ConceptHistory.modelsOnWarning = new ConcurrentHashMap<Integer,Boolean> ();
         }
@@ -784,7 +785,7 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
     		// List of ensembles with an active warning used as to determine if the history list evaluators should be in use
     		public static ConcurrentHashMap<Integer,Boolean> modelsOnWarning; // = new ConcurrentHashMap<Integer,Boolean> ();
     		
-    		public ConceptHistory(){
+    		/*public ConceptHistory(){
         		historyList=new ConcurrentHashMap<Integer,Concept> ();
         		System.out.println("Concept History created");
         }
@@ -797,7 +798,7 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 
 	    public static RCARFBaseLearner getConcept(int key) {
 			return historyList.get(key).getBaseLearner();
-	    }
+	    }*/
 	    
 	    public static RCARFBaseLearner extractConcept(int key) {
 	    		RCARFBaseLearner aux = historyList.get(key).getBaseLearner();
@@ -810,22 +811,24 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
         }
 	        
         // Getters
-        
+        /*
         public static HashMap<Integer,Concept> getConceptHistorySnapshot() {
 			return new HashMap<Integer,Concept>(historyList);
         }
         
         public Concept pullConcept(int modelID){
     			return historyList.get(modelID);
-        }
+        }*/
         
         public static int nextID() {
         		return lastID++;
         }
         
+        /*
         public int getHistorySize() {
         		return historyList.size();
         }
+        */
         
     }
     
