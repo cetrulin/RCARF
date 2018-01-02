@@ -752,7 +752,7 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
     	            // System.out.println("DRIFT RESET IN POSITION #"+this.indexOriginal+" TO NEW BKG MODEL"); 
     				
 	            //# instance, model, event, last-error, models_on_warning, applicable_concepts_from_here, recurring_drift_to_history_id
-	            System.out.println(this.lastDriftOn+";"+this.indexOriginal+";DRIFT TO BKG MODEL"+";"+this.evaluator.getFractionIncorrectlyClassified()+
+    				eventsLogFile.println(this.lastDriftOn+";"+this.indexOriginal+";DRIFT TO BKG MODEL"+";"+this.evaluator.getFractionIncorrectlyClassified()+
 	            		";"+ConceptHistory.modelsOnWarning+";"+"N/A"+";"+"N/A");
     			}
         }
