@@ -322,8 +322,9 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 			ConceptHistory.modelsOnWarning = new ConcurrentHashMap<Integer,Boolean> ();
         }
         
-        try {
+        try { // Start events logging and print headers
 			eventsLogFile = new PrintWriter(this.eventsLogFileOption.getValue());
+	        eventsLogFile.println("#instance;model;event;last-error;#models;#active_warnings;models_on_warning;applicable_concepts_from_here;recurring_drift_to_history_id");
 		} catch (FileNotFoundException e) {
 			e.printStackTrace();
 		}
@@ -583,9 +584,11 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
                     this.reset();
                 } 
             } //if (toLog) {
-                //# instance, model, event, last-error, models_on_warning, applicable_concepts_from_here, recurring_drift_to_history_id
+            		//# instance, model, event, last-error, #models;#active_warnings; models_on_warning, applicable_concepts_from_here, recurring_drift_to_history_id
             		eventsLogFile.println(instancesSeen+";"+this.indexOriginal+";Train example"+";"
-                					  +this.evaluator.getFractionIncorrectlyClassified()+";"+ConceptHistory.modelsOnWarning+";"+"N/A"+";N/A"); // TODO IMPROVE THIS
+                					  +this.evaluator.getFractionIncorrectlyClassified()+
+                					  ";"+ConceptHistory.modelsOnWarning.size()+";"+ConceptHistory.getNumberOfActiveWarnings()+
+                					  ";"+ConceptHistory.modelsOnWarning+";"+"N/A"+";N/A"); // TODO IMPROVE THIS
                 //1279,1,WARNING-START,0.74,{F,T,F;F;F;F},N/A
             //}
         } 
@@ -653,8 +656,10 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 	            // System.out.println("CONCEPT HISTORY STATE AND APPLICABLE FROM THIS WARNING IS: "+ConceptHistory.historyList.keySet().toString());
 	            // System.out.println("-------------------------------------------------");
 	            // System.out.println();
-	            //# instance, model, event, last-error, models_on_warning, applicable_concepts_from_here, recurring_drift_to_history_id
-	            eventsLogFile.println(this.lastWarningOn+";"+this.indexOriginal+";WARNING-START"+";"+this.evaluator.getFractionIncorrectlyClassified()+";"+ConceptHistory.modelsOnWarning+";"+ConceptHistory.historyList.keySet().toString()+";N/A");
+	            //# instance, model, event, last-error, #models;#active_warnings; models_on_warning, applicable_concepts_from_here, recurring_drift_to_history_id
+	            eventsLogFile.println(this.lastWarningOn+";"+this.indexOriginal+";WARNING-START"+";"+this.evaluator.getFractionIncorrectlyClassified()+
+	            		";"+ConceptHistory.modelsOnWarning.size()+";"+ConceptHistory.getNumberOfActiveWarnings()+
+	            		";"+ConceptHistory.modelsOnWarning+";"+ConceptHistory.historyList.keySet().toString()+";N/A");
 	            //1279,1,WARNING-START,0.74,{F,T,F;F;F;F},...
     	        } else {
     	            // System.out.println();
@@ -728,9 +733,10 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 		        		//// System.out.println(getMinKey(ranking)); // TODO: debugging
 	    	            // System.out.println("RECURRING DRIFT RESET IN POSITION #"+this.indexOriginal+" TO MODEL #"+ConceptHistory.historyList.get(getMinKey(ranking)).ensembleIndex); //+this.bkgLearner.indexOriginal);   
 
-		            //# instance, model, event, last-error, models_on_warning, applicable_concepts_from_here, recurring_drift_to_history_id
+			        //# instance, model, event, last-error, #models;#active_warnings; models_on_warning, applicable_concepts_from_here, recurring_drift_to_history_id
 		    			eventsLogFile.println(this.lastDriftOn+";"+this.indexOriginal+";RECURRING DRIFT"+";"+this.evaluator.getFractionIncorrectlyClassified()+
-		            		";"+ConceptHistory.modelsOnWarning+";"+"N/A"+";"+ConceptHistory.historyList.get(getMinKey(ranking)).ensembleIndex);
+		    					";"+ConceptHistory.modelsOnWarning.size()+";"+ConceptHistory.getNumberOfActiveWarnings()+
+		    					";"+ConceptHistory.modelsOnWarning+";"+"N/A"+";"+ConceptHistory.historyList.get(getMinKey(ranking)).ensembleIndex);
 		            //1279,1,WARNING-START,0.74,{F,T,F;F;F;F},...
 	    			
 		    			// Extracts best recurring learner form concept history. It no longer exists in the concept history
@@ -742,18 +748,20 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 		    			//				this.bkgLearner.internalWindowEvaluator).getFractionIncorrectlyClassified(this.bkgLearner.indexOriginal));
 	    	            // System.out.println("DRIFT RESET IN MODEL #"+this.indexOriginal+" TO NEW BKG MODEL #"+this.bkgLearner.indexOriginal); 
 		    			
-		            //# instance, model, event, last-error, models_on_warning, applicable_concepts_from_here, recurring_drift_to_history_id
+		            //# instance, model, event, last-error, #models;#active_warnings; models_on_warning, applicable_concepts_from_here, recurring_drift_to_history_id
 		    			eventsLogFile.println(this.lastDriftOn+";"+this.indexOriginal+";DRIFT TO BKG MODEL"+";"+this.evaluator.getFractionIncorrectlyClassified()+
-		            		";"+ConceptHistory.modelsOnWarning+";"+"N/A"+";"+"N/A");
+		    					";"+ConceptHistory.modelsOnWarning.size()+";"+ConceptHistory.getNumberOfActiveWarnings()+
+		    					";"+ConceptHistory.modelsOnWarning+";"+"N/A"+";"+"N/A");
 			        //1279,1,WARNING-START,0.74,{F,T,F;F;F;F},...
 		    		}
     			} else {
     				// System.out.println("0 applicable concepts for model  #"+this.indexOriginal+" in concept history.");
     	            // System.out.println("DRIFT RESET IN POSITION #"+this.indexOriginal+" TO NEW BKG MODEL"); 
     				
-	            //# instance, model, event, last-error, models_on_warning, applicable_concepts_from_here, recurring_drift_to_history_id
+	            //# instance, model, event, last-error, #models;#active_warnings; models_on_warning, applicable_concepts_from_here, recurring_drift_to_history_id
     				eventsLogFile.println(this.lastDriftOn+";"+this.indexOriginal+";DRIFT TO BKG MODEL"+";"+this.evaluator.getFractionIncorrectlyClassified()+
-	            		";"+ConceptHistory.modelsOnWarning+";"+"N/A"+";"+"N/A");
+    						";"+ConceptHistory.modelsOnWarning.size()+";"+ConceptHistory.getNumberOfActiveWarnings()+
+    						";"+ConceptHistory.modelsOnWarning+";"+"N/A"+";"+"N/A");
     			}
         }
         
@@ -834,6 +842,12 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 	    		RCARFBaseLearner aux = historyList.get(key).getBaseLearner();
 	    		historyList.remove(key);
 			return aux;
+	    }
+	    
+	    public static int getNumberOfActiveWarnings() {
+	    		int count = 0;
+	    		for(Boolean value: modelsOnWarning.values()) if (value) count++;
+	    		return count;
 	    }
 	    
 		public Set<Entry<Integer,Concept>> getConceptHistoryEntrySet() {
