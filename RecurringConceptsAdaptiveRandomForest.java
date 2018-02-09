@@ -167,7 +167,10 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
     		//+ "if the historic model is selected as new active model and the threshold option is not disabled.", 1, 0, 2);
     
     public StringOption eventsLogFileOption = new StringOption("eventsLogFile",'e',"File path to export events as warnings and drifts", "./RCARF_events_log.txt");
-
+    
+    public FlagOption disableEventsLogFileOption = new FlagOption("disableEventsLogFile", 'g', 
+            "Should export event logs to analyze them in the future? If disabled then events are not logged.");
+    
 	// ////////////////////////////////////////////////
 	// ////////////////////////////////////////////////
     protected static final int FEATURES_M = 0;
@@ -323,9 +326,13 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
         }
         
         try { // Start events logging and print headers
-			eventsLogFile = new PrintWriter(this.eventsLogFileOption.getValue());
-	        eventsLogFile.println("#instance;model;event;last-error;#models;#active_warnings;models_on_warning;applicable_concepts_from_here;recurring_drift_to_history_id");
-		} catch (FileNotFoundException e) {
+        		if (disableEventsLogFileOption.isSet()) {
+        			eventsLogFile = null;
+        		} else {
+        			eventsLogFile = new PrintWriter(this.eventsLogFileOption.getValue());
+    		        eventsLogFile.println("#instance;model;event;last-error;#models;#active_warnings;models_on_warning;applicable_concepts_from_here;recurring_drift_to_history_id");
+        		}
+        	} catch (FileNotFoundException e) {
 			e.printStackTrace();
 		}
         
@@ -583,14 +590,14 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 	        		   // 2 Transition to new model
                     this.reset();
                 } 
-            } //if (toLog) {
+            } if (eventsLogFile != null) {
             		//# instance, model, event, last-error, #models;#active_warnings; models_on_warning, applicable_concepts_from_here, recurring_drift_to_history_id
             		eventsLogFile.println(instancesSeen+";"+this.indexOriginal+";Train example"+";"
                 					  +this.evaluator.getFractionIncorrectlyClassified()+
                 					  ";"+ConceptHistory.modelsOnWarning.size()+";"+ConceptHistory.getNumberOfActiveWarnings()+
-                					  ";"+ConceptHistory.modelsOnWarning+";"+"N/A"+";N/A"); // TODO IMPROVE THIS
+                					  ";"+ConceptHistory.modelsOnWarning+";"+"N/A"+";N/A"); 
                 //1279,1,WARNING-START,0.74,{F,T,F;F;F;F},N/A
-            //}
+            }
         } 
         
         // Saves a backup of the active model that raised a warning to be stored in the concept history in case of drift.
@@ -657,10 +664,12 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 	            // System.out.println("-------------------------------------------------");
 	            // System.out.println();
 	            //# instance, model, event, last-error, #models;#active_warnings; models_on_warning, applicable_concepts_from_here, recurring_drift_to_history_id
-	            eventsLogFile.println(this.lastWarningOn+";"+this.indexOriginal+";WARNING-START"+";"+this.evaluator.getFractionIncorrectlyClassified()+
-	            		";"+ConceptHistory.modelsOnWarning.size()+";"+ConceptHistory.getNumberOfActiveWarnings()+
-	            		";"+ConceptHistory.modelsOnWarning+";"+ConceptHistory.historyList.keySet().toString()+";N/A");
-	            //1279,1,WARNING-START,0.74,{F,T,F;F;F;F},...
+	            if (eventsLogFile != null) {
+		            eventsLogFile.println(this.lastWarningOn+";"+this.indexOriginal+";WARNING-START"+";"+this.evaluator.getFractionIncorrectlyClassified()+
+		            		";"+ConceptHistory.modelsOnWarning.size()+";"+ConceptHistory.getNumberOfActiveWarnings()+
+		            		";"+ConceptHistory.modelsOnWarning+";"+ConceptHistory.historyList.keySet().toString()+";N/A");
+		            //1279,1,WARNING-START,0.74,{F,T,F;F;F;F},...
+	            }
     	        } else {
     	            // System.out.println();
     	            // System.out.println("-------------------------------------------------");
@@ -732,13 +741,13 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 		        		//// System.out.println(ranking.size()); // TODO: debugging
 		        		//// System.out.println(getMinKey(ranking)); // TODO: debugging
 	    	            // System.out.println("RECURRING DRIFT RESET IN POSITION #"+this.indexOriginal+" TO MODEL #"+ConceptHistory.historyList.get(getMinKey(ranking)).ensembleIndex); //+this.bkgLearner.indexOriginal);   
-
-			        //# instance, model, event, last-error, #models;#active_warnings; models_on_warning, applicable_concepts_from_here, recurring_drift_to_history_id
-		    			eventsLogFile.println(this.lastDriftOn+";"+this.indexOriginal+";RECURRING DRIFT"+";"+this.evaluator.getFractionIncorrectlyClassified()+
-		    					";"+ConceptHistory.modelsOnWarning.size()+";"+ConceptHistory.getNumberOfActiveWarnings()+
-		    					";"+ConceptHistory.modelsOnWarning+";"+"N/A"+";"+ConceptHistory.historyList.get(getMinKey(ranking)).ensembleIndex);
-		            //1279,1,WARNING-START,0.74,{F,T,F;F;F;F},...
-	    			
+		    			if (eventsLogFile != null) {
+				        //# instance, model, event, last-error, #models;#active_warnings; models_on_warning, applicable_concepts_from_here, recurring_drift_to_history_id
+			    			eventsLogFile.println(this.lastDriftOn+";"+this.indexOriginal+";RECURRING DRIFT"+";"+this.evaluator.getFractionIncorrectlyClassified()+
+			    					";"+ConceptHistory.modelsOnWarning.size()+";"+ConceptHistory.getNumberOfActiveWarnings()+
+			    					";"+ConceptHistory.modelsOnWarning+";"+"N/A"+";"+ConceptHistory.historyList.get(getMinKey(ranking)).ensembleIndex);
+			            //1279,1,WARNING-START,0.74,{F,T,F;F;F;F},...
+		    			}
 		    			// Extracts best recurring learner form concept history. It no longer exists in the concept history
 	    	            this.bkgLearner = ConceptHistory.extractConcept(getMinKey(ranking));
 		    		} else {
@@ -747,21 +756,23 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 		    			//		((DynamicWindowClassificationPerformanceEvaluator) 
 		    			//				this.bkgLearner.internalWindowEvaluator).getFractionIncorrectlyClassified(this.bkgLearner.indexOriginal));
 	    	            // System.out.println("DRIFT RESET IN MODEL #"+this.indexOriginal+" TO NEW BKG MODEL #"+this.bkgLearner.indexOriginal); 
-		    			
-		            //# instance, model, event, last-error, #models;#active_warnings; models_on_warning, applicable_concepts_from_here, recurring_drift_to_history_id
-		    			eventsLogFile.println(this.lastDriftOn+";"+this.indexOriginal+";DRIFT TO BKG MODEL"+";"+this.evaluator.getFractionIncorrectlyClassified()+
-		    					";"+ConceptHistory.modelsOnWarning.size()+";"+ConceptHistory.getNumberOfActiveWarnings()+
-		    					";"+ConceptHistory.modelsOnWarning+";"+"N/A"+";"+"N/A");
-			        //1279,1,WARNING-START,0.74,{F,T,F;F;F;F},...
+		    			if (eventsLogFile != null) {
+			            //# instance, model, event, last-error, #models;#active_warnings; models_on_warning, applicable_concepts_from_here, recurring_drift_to_history_id
+			    			eventsLogFile.println(this.lastDriftOn+";"+this.indexOriginal+";DRIFT TO BKG MODEL"+";"+this.evaluator.getFractionIncorrectlyClassified()+
+			    					";"+ConceptHistory.modelsOnWarning.size()+";"+ConceptHistory.getNumberOfActiveWarnings()+
+			    					";"+ConceptHistory.modelsOnWarning+";"+"N/A"+";"+"N/A");
+				        //1279,1,WARNING-START,0.74,{F,T,F;F;F;F},...
+		    			}
 		    		}
     			} else {
     				// System.out.println("0 applicable concepts for model  #"+this.indexOriginal+" in concept history.");
     	            // System.out.println("DRIFT RESET IN POSITION #"+this.indexOriginal+" TO NEW BKG MODEL"); 
-    				
-	            //# instance, model, event, last-error, #models;#active_warnings; models_on_warning, applicable_concepts_from_here, recurring_drift_to_history_id
-    				eventsLogFile.println(this.lastDriftOn+";"+this.indexOriginal+";DRIFT TO BKG MODEL"+";"+this.evaluator.getFractionIncorrectlyClassified()+
-    						";"+ConceptHistory.modelsOnWarning.size()+";"+ConceptHistory.getNumberOfActiveWarnings()+
-    						";"+ConceptHistory.modelsOnWarning+";"+"N/A"+";"+"N/A");
+    				if (eventsLogFile != null) {
+		            //# instance, model, event, last-error, #models;#active_warnings; models_on_warning, applicable_concepts_from_here, recurring_drift_to_history_id
+	    				eventsLogFile.println(this.lastDriftOn+";"+this.indexOriginal+";DRIFT TO BKG MODEL"+";"+this.evaluator.getFractionIncorrectlyClassified()+
+	    						";"+ConceptHistory.modelsOnWarning.size()+";"+ConceptHistory.getNumberOfActiveWarnings()+
+	    						";"+ConceptHistory.modelsOnWarning+";"+"N/A"+";"+"N/A");
+    				}
     			}
         }
         
