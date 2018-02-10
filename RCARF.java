@@ -111,13 +111,13 @@ public class RCARF extends AbstractClassifier implements MultiClassClassifier {
         "The number of trees.", 10, 1, Integer.MAX_VALUE);
     
     public MultiChoiceOption mFeaturesModeOption = new MultiChoiceOption("mFeaturesMode", 'o', 
-        "Defines how m, defined by mFeaturesPerTreeSize, is interpreted. M represents the total number of features.",
+        "Defines how m, defined by mFeaturesPerTreeSize, is interpreted. M represents the total number of features. (Only for Adaptive Random Forest Hoeffding Tree)",
         new String[]{"Specified m (integer value)", "sqrt(M)+1", "M-(sqrt(M)+1)",
             "Percentage (M * (m / 100))"},
         new String[]{"SpecifiedM", "SqrtM1", "MSqrtM1", "Percentage"}, 1);
     
     public IntOption mFeaturesPerTreeSizeOption = new IntOption("mFeaturesPerTreeSize", 'm',
-        "Number of features allowed considered for each split. Negative values corresponds to M - m", 2, Integer.MIN_VALUE, Integer.MAX_VALUE);
+        "Number of features allowed considered for each split. Negative values corresponds to M - m. (Only for Adaptive Random Forest Hoeffding Tree)", 2, Integer.MIN_VALUE, Integer.MAX_VALUE);
     
     public FloatOption lambdaOption = new FloatOption("lambda", 'a',
         "The lambda parameter for bagging.", 6.0, 1.0, Float.MAX_VALUE);
@@ -382,7 +382,7 @@ public class RCARF extends AbstractClassifier implements MultiClassClassifier {
         
         for(int i = 0 ; i < ensembleSize ; ++i) {	
         		if(learner.getPurposeString().contains("Adaptive Random Forest Hoeffding Tree for data streams.")) {
-        			System.out.println("The current version supports feature subspace. Appyling it to model...");
+        			System.out.println("The current base learner supports feature subspace. Appyling it to classifier: #"+(i+1));
         			((ARFHoeffdingTree) learner).subspaceSizeOption.setValue(this.subspaceSize);
         		}
             this.ensemble[i] = new RCARFBaseLearner(
@@ -621,7 +621,7 @@ public class RCARF extends AbstractClassifier implements MultiClassClassifier {
     			// First, the internal evaluator will be null. 
     			// It doesn't get initialized till once in the Concept History and the first warning arises. See it in startWarningWindow
     			RCARFBaseLearner tmpConcept = new RCARFBaseLearner(this.indexOriginal, 
-    					(ARFHoeffdingTree) this.classifier.copy(), (BasicClassificationPerformanceEvaluator) this.evaluator.copy(), 
+    					(Classifier) this.classifier.copy(), (BasicClassificationPerformanceEvaluator) this.evaluator.copy(), 
     					this.createdOn, this.useBkgLearner, this.useDriftDetector, this.driftOption, this.warningOption, 
     					true, this.useRecurringLearner, true, this.windowProperties.copy(), null, eventsLogFile);
 
@@ -701,7 +701,7 @@ public class RCARF extends AbstractClassifier implements MultiClassClassifier {
         		//if (this.bkgLearner != null) this.bkgLearner.internalWindowEvaluator.clear(); // I don't see any improvement
         	
             // 1 Create a new bkgTree classifier
-            ARFHoeffdingTree bkgClassifier = (ARFHoeffdingTree) this.classifier.copy();
+            Classifier bkgClassifier = (Classifier) this.classifier.copy();
             bkgClassifier.resetLearning();
                                     
             // 2 Resets the evaluator
