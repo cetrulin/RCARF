@@ -1,7 +1,7 @@
 /*
- *    AdaptiveRandomForest.java
+ *    RecurringConceptsAdaptiveRandomForest.java
  * 
- *    @author Heitor Murilo Gomes (heitor_murilo_gomes at yahoo dot com dot br)
+ *    @author Andres Leon Suarez Cetrulo (suarezcetrulo at gmail dot com)
  *
  *    Licensed under the Apache License, Version 2.0 (the "License");
  *    you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@ package moa.classifiers.meta;
 import com.yahoo.labs.samoa.instances.Instance;
 
 import moa.classifiers.AbstractClassifier;
+import moa.classifiers.Classifier;
 import moa.classifiers.MultiClassClassifier;
 import moa.core.DoubleVector;
 import moa.core.InstanceExample;
@@ -56,9 +57,9 @@ import moa.classifiers.core.driftdetection.ChangeDetector;
 
 
 /**
- * Adaptive Random Forest
+ * Recurring Concepts Adaptive Random Forest
  *
- * <p>Adaptive Random Forest (ARF). The 3 most important aspects of this 
+ * <p>Originally from Adaptive Random Forest (ARF). The 3 most important aspects of this 
  * ensemble classifier are: (1) inducing diversity through resampling;
  * (2) inducing diversity through randomly selecting subsets of features for 
  * node splits (See moa.classifiers.trees.ARFHoeffdingTree.java); (3) drift 
@@ -87,10 +88,10 @@ import moa.classifiers.core.driftdetection.ChangeDetector;
  * <li>-q : Should use bkg learner? If disabled then reset tree immediately</li>
  * </ul>
  *
- * @author Heitor Murilo Gomes (heitor_murilo_gomes at yahoo dot com dot br)
+ * @author Andres Leon Suarez Cetrulo (suarezcetrulo at gmail dot com)
  * @version $Revision: 1 $
  */
-public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier implements MultiClassClassifier {
+public class RCARF extends AbstractClassifier implements MultiClassClassifier {
 
     @Override
     public String getPurposeString() {
@@ -99,9 +100,12 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
     
     private static final long serialVersionUID = 1L;
 
-    public ClassOption treeLearnerOption = new ClassOption("treeLearner", 'l',
+    public ClassOption baseLearnerOption = new ClassOption("baseLearner", 'l',
+            "Classifier to train.", Classifier.class, "trees.ARFHoeffdingTree -e 2000000 -g 50 -c 0.01");
+    
+    /*public ClassOption treeLearnerOption = new ClassOption("treeLearner", 'l',
             "Random Forest Tree.", ARFHoeffdingTree.class,
-            "ARFHoeffdingTree -e 2000000 -g 50 -c 0.01");
+            "ARFHoeffdingTree -e 2000000 -g 50 -c 0.01");*/
 
     public IntOption ensembleSizeOption = new IntOption("ensembleSize", 's',
         "The number of trees.", 10, 1, Integer.MAX_VALUE);
@@ -205,7 +209,7 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
             numberOfJobs = this.numberOfJobsOption.getValue();
         // SINGLE_THREAD and requesting for only 1 thread are equivalent. 
         // this.executor will be null and not used...
-        if(numberOfJobs != AdaptiveRandomForest.SINGLE_THREAD && numberOfJobs != 1)
+        if(numberOfJobs != RCARF.SINGLE_THREAD && numberOfJobs != 1)
             this.executor = Executors.newFixedThreadPool(numberOfJobs);
     }
 
@@ -342,20 +346,20 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
         int n = instance.numAttributes()-1; // Ignore class label ( -1 )
         
         switch(this.mFeaturesModeOption.getChosenIndex()) {
-            case AdaptiveRandomForest.FEATURES_SQRT:
+            case RCARF.FEATURES_SQRT:
                 this.subspaceSize = (int) Math.round(Math.sqrt(n)) + 1;
                 break;
-            case AdaptiveRandomForest.FEATURES_SQRT_INV:
+            case RCARF.FEATURES_SQRT_INV:
                 this.subspaceSize = n - (int) Math.round(Math.sqrt(n) + 1);
                 break;
-            case AdaptiveRandomForest.FEATURES_PERCENT:
+            case RCARF.FEATURES_PERCENT:
                 // If subspaceSize is negative, then first find out the actual percent, i.e., 100% - m.
                 double percent = this.subspaceSize < 0 ? (100 + this.subspaceSize)/100.0 : this.subspaceSize / 100.0;
                 this.subspaceSize = (int) Math.round(n * percent);
                 break;
         }
         // Notice that if the selected mFeaturesModeOption was 
-        //  AdaptiveRandomForest.FEATURES_M then nothing is performed in the
+        //  RecurringConceptsAdaptiveRandomForest.FEATURES_M then nothing is performed in the
         //  previous switch-case, still it is necessary to check (and adjusted) 
         //  for when a negative value was used. 
         
@@ -371,14 +375,19 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
         if(this.subspaceSize > n)
             this.subspaceSize = n;
         
-        ARFHoeffdingTree treeLearner = (ARFHoeffdingTree) getPreparedClassOption(this.treeLearnerOption);
-        treeLearner.resetLearning();
+        //ARFHoeffdingTree treeLearner = (ARFHoeffdingTree) getPreparedClassOption(this.treeLearnerOption);
+        //treeLearner.resetLearning();        
+        Classifier learner = (Classifier) getPreparedClassOption(this.baseLearnerOption);
+        learner.resetLearning();
         
-        for(int i = 0 ; i < ensembleSize ; ++i) {
-            treeLearner.subspaceSizeOption.setValue(this.subspaceSize);
+        for(int i = 0 ; i < ensembleSize ; ++i) {	
+        		if(learner.getPurposeString().contains("Adaptive Random Forest Hoeffding Tree for data streams.")) {
+        			System.out.println("The current version supports feature subspace. Appyling it to model...");
+        			((ARFHoeffdingTree) learner).subspaceSizeOption.setValue(this.subspaceSize);
+        		}
             this.ensemble[i] = new RCARFBaseLearner(
                 i, 
-                (ARFHoeffdingTree) treeLearner.copy(), 
+                (Classifier) learner.copy(), 
                 (BasicClassificationPerformanceEvaluator) classificationEvaluator.copy(), 
                 this.instancesSeen, 
                 ! this.disableBackgroundLearnerOption.isSet(),
@@ -405,7 +414,7 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
         public long createdOn;
         public long lastDriftOn;
         public long lastWarningOn;
-        public ARFHoeffdingTree classifier;
+        public Classifier classifier;
         public boolean isBackgroundLearner;
         public boolean isOldLearner; // only for reference
         
@@ -438,7 +447,7 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
         public PrintWriter eventsLogFile;
 
         
-        private void init(int indexOriginal, ARFHoeffdingTree instantiatedClassifier, BasicClassificationPerformanceEvaluator evaluatorInstantiated, 
+        private void init(int indexOriginal, Classifier classifier, BasicClassificationPerformanceEvaluator evaluatorInstantiated, 
             long instancesSeen, boolean useBkgLearner, boolean useDriftDetector, ClassOption driftOption, ClassOption warningOption, boolean isBackgroundLearner, 
             boolean useRecurringLearner, boolean isOldLearner, Window windowProperties, DynamicWindowClassificationPerformanceEvaluator internalEvaluator,
             PrintWriter eventsLogFile) { // last parameters added by @suarezcetrulo
@@ -448,7 +457,7 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
             this.lastWarningOn = 0;
             this.eventsLogFile = eventsLogFile;
             
-            this.classifier = instantiatedClassifier;
+            this.classifier = classifier;
             this.evaluator = evaluatorInstantiated;
             this.useBkgLearner = useBkgLearner;
             this.useRecurringLearner = useRecurringLearner;
@@ -480,11 +489,11 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
         }
 
         // last inputs parameters added by @suarezcetrulo
-        public RCARFBaseLearner(int indexOriginal, ARFHoeffdingTree instantiatedClassifier, BasicClassificationPerformanceEvaluator evaluatorInstantiated, 
+        public RCARFBaseLearner(int indexOriginal, Classifier classifier, BasicClassificationPerformanceEvaluator evaluatorInstantiated, 
                     long instancesSeen, boolean useBkgLearner, boolean useDriftDetector, ClassOption driftOption, ClassOption warningOption, 
                     boolean isBackgroundLearner, boolean useRecurringLearner, boolean isOldLearner, 
                     Window windowProperties, DynamicWindowClassificationPerformanceEvaluator bkgInternalEvaluator, PrintWriter eventsLogFile) {
-            init(indexOriginal, instantiatedClassifier, evaluatorInstantiated, instancesSeen, useBkgLearner, 
+            init(indexOriginal, classifier, evaluatorInstantiated, instancesSeen, useBkgLearner, 
             		 useDriftDetector, driftOption, warningOption, isBackgroundLearner, useRecurringLearner,  isOldLearner, 
             		 windowProperties,bkgInternalEvaluator, eventsLogFile);
         }
