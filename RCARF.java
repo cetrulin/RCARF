@@ -621,7 +621,7 @@ public class RCARF extends AbstractClassifier implements MultiClassClassifier {
     			// First, the internal evaluator will be null. 
     			// It doesn't get initialized till once in the Concept History and the first warning arises. See it in startWarningWindow
     			RCARFBaseLearner tmpConcept = new RCARFBaseLearner(this.indexOriginal, 
-    					(Classifier) this.classifier.copy(), (BasicClassificationPerformanceEvaluator) this.evaluator.copy(), 
+    					this.classifier.copy(), (BasicClassificationPerformanceEvaluator) this.evaluator.copy(), 
     					this.createdOn, this.useBkgLearner, this.useDriftDetector, this.driftOption, this.warningOption, 
     					true, this.useRecurringLearner, true, this.windowProperties.copy(), null, eventsLogFile);
 
@@ -701,7 +701,7 @@ public class RCARF extends AbstractClassifier implements MultiClassClassifier {
         		//if (this.bkgLearner != null) this.bkgLearner.internalWindowEvaluator.clear(); // I don't see any improvement
         	
             // 1 Create a new bkgTree classifier
-            Classifier bkgClassifier = (Classifier) this.classifier.copy();
+            Classifier bkgClassifier = this.classifier.copy();
             bkgClassifier.resetLearning();
                                     
             // 2 Resets the evaluator
