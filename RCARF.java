@@ -382,7 +382,7 @@ public class RCARF extends AbstractClassifier implements MultiClassClassifier {
         
         for(int i = 0 ; i < ensembleSize ; ++i) {	
         		if(learner.getPurposeString().contains("Adaptive Random Forest Hoeffding Tree for data streams.")) {
-        			System.out.println("The current base learner supports feature subspace. Appyling it to classifier: #"+(i+1));
+        			//System.out.println("The current base learner supports feature subspace. Appyling it to classifier: #"+(i+1));
         			((ARFHoeffdingTree) learner).subspaceSizeOption.setValue(this.subspaceSize);
         		}
             this.ensemble[i] = new RCARFBaseLearner(
@@ -744,9 +744,9 @@ public class RCARF extends AbstractClassifier implements MultiClassClassifier {
 	    		
 	    		// If there are no available choices, the new active model will be the background one. Each bkg model has its own learner.
     			if(ranking.size()>0) {
-		    		// 2 Compare this against the background model 
-		    		if(Collections.min(ranking.values())<=((DynamicWindowClassificationPerformanceEvaluator) 
-							this.bkgLearner.internalWindowEvaluator).getFractionIncorrectlyClassified(this.bkgLearner.indexOriginal)){
+		    		// 2 Compare this against the background model (in an edge case where the bkgmodel is still NULL, we ignore the comparisons)
+		    		if(this.bkgLearner != null && (Collections.min(ranking.values())<=((DynamicWindowClassificationPerformanceEvaluator) 
+							this.bkgLearner.internalWindowEvaluator).getFractionIncorrectlyClassified(this.bkgLearner.indexOriginal))){
 		        		//// System.out.println(ranking.size()); // TODO: debugging
 		        		//// System.out.println(getMinKey(ranking)); // TODO: debugging
 	    	            // System.out.println("RECURRING DRIFT RESET IN POSITION #"+this.indexOriginal+" TO MODEL #"+ConceptHistory.historyList.get(getMinKey(ranking)).ensembleIndex); //+this.bkgLearner.indexOriginal);   

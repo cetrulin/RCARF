@@ -736,7 +736,7 @@ public class RecurringConceptsAdaptiveRandomForest extends AbstractClassifier im
 	    		// If there are no available choices, the new active model will be the background one. Each bkg model has its own learner.
     			if(ranking.size()>0) {
 		    		// 2 Compare this against the background model 
-		    		if(Collections.min(ranking.values())<=((DynamicWindowClassificationPerformanceEvaluator) 
+		    		if(this.bkgLearner != null && Collections.min(ranking.values())<=((DynamicWindowClassificationPerformanceEvaluator) 
 							this.bkgLearner.internalWindowEvaluator).getFractionIncorrectlyClassified(this.bkgLearner.indexOriginal)){
 		        		//// System.out.println(ranking.size()); // TODO: debugging
 		        		//// System.out.println(getMinKey(ranking)); // TODO: debugging
