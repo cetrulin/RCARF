@@ -126,10 +126,10 @@ public class RCARF extends AbstractClassifier implements MultiClassClassifier {
         "Total number of concurrent jobs used for processing (-1 = as much as possible, 0 = do not use multithreading)", 1, -1, Integer.MAX_VALUE);
     
     public ClassOption driftDetectionMethodOption = new ClassOption("driftDetectionMethod", 'x',
-        "Change detector for drifts and its parameters", ChangeDetector.class, "ADWINChangeDetector -a 1.0E-5");
+        "Change detector for drifts and its parameters", ChangeDetector.class, "eADWINChangeDetector -a 1.0E-5");
 
     public ClassOption warningDetectionMethodOption = new ClassOption("warningDetectionMethod", 'p',
-        "Change detector for warnings (start training bkg learner)", ChangeDetector.class, "ADWINChangeDetector -a 1.0E-4");
+        "Change detector for warnings (start training bkg learner)", ChangeDetector.class, "eADWINChangeDetector -a 1.0E-4");
     
     public FlagOption disableWeightedVote = new FlagOption("disableWeightedVote", 'w', 
             "Should use weighted voting?");
@@ -174,6 +174,9 @@ public class RCARF extends AbstractClassifier implements MultiClassClassifier {
     
     public FlagOption disableEventsLogFileOption = new FlagOption("disableEventsLogFile", 'g', 
             "Should export event logs to analyze them in the future? If disabled then events are not logged.");
+   
+    public IntOption logLevelOption = new IntOption("eventsLogFileLevel", 'h', 
+            "0 only logs drifts; 1 logs drifts + warnings; 2 logs every data example", 1, 0, 2);
     
 	// ////////////////////////////////////////////////
 	// ////////////////////////////////////////////////
@@ -334,7 +337,21 @@ public class RCARF extends AbstractClassifier implements MultiClassClassifier {
         			eventsLogFile = null;
         		} else {
         			eventsLogFile = new PrintWriter(this.eventsLogFileOption.getValue());
-    		        eventsLogFile.println("#instance;model;event;last-error;#models;#active_warnings;models_on_warning;applicable_concepts_from_here;recurring_drift_to_history_id");
+            		eventsLogFile.println(
+            				String.join(";",
+		            					"instance_number", 
+		            					"event_type", 
+		            					"affected_position", //former 'model'
+		            					"affected_classifier_created_on", //new
+		            					"error_percentage", 
+		            					"amount_of_models",
+		            					"amount_of_active_warnings",
+		            					"classifiers_on_warning",
+		            					"applicable_concepts",
+		            					"recurring_drift_to_history_id",
+		            					"recurring_drift_to_classifier_created_on") // new
+            				);
+	            //1279,1,WARNING-START,0.74,{F,T,F;F;F;F},...
         		}
         	} catch (FileNotFoundException e) {
 			e.printStackTrace();
@@ -400,7 +417,8 @@ public class RCARF extends AbstractClassifier implements MultiClassClassifier {
                 new Window(this.defaultWindowOption.getValue(), this.windowIncrementsOption.getValue(), this.minWindowSizeOption.getValue(), this.thresholdOption.getValue(), 
         				this.rememberConceptWindowOption.isSet()? true: false, this.resizeAllWindowsOption.isSet()? true: false, windowResizePolicyOption.getValue()),
                 null, // @suarezcetrulo : Windows start at NULL
-                eventsLogFile
+                eventsLogFile,
+                logLevelOption.getValue()
             		);
         }
     }
@@ -445,17 +463,19 @@ public class RCARF extends AbstractClassifier implements MultiClassClassifier {
         protected Window windowProperties;
         
         public PrintWriter eventsLogFile;
+        public int logLevel;
 
         
         private void init(int indexOriginal, Classifier classifier, BasicClassificationPerformanceEvaluator evaluatorInstantiated, 
             long instancesSeen, boolean useBkgLearner, boolean useDriftDetector, ClassOption driftOption, ClassOption warningOption, boolean isBackgroundLearner, 
             boolean useRecurringLearner, boolean isOldLearner, Window windowProperties, DynamicWindowClassificationPerformanceEvaluator internalEvaluator,
-            PrintWriter eventsLogFile) { // last parameters added by @suarezcetrulo
+            PrintWriter eventsLogFile, int logLevel) { // last parameters added by @suarezcetrulo
             this.indexOriginal = indexOriginal;
             this.createdOn = instancesSeen;
             this.lastDriftOn = 0;
             this.lastWarningOn = 0;
             this.eventsLogFile = eventsLogFile;
+            this.logLevel = logLevel;
             
             this.classifier = classifier;
             this.evaluator = evaluatorInstantiated;
@@ -492,10 +512,10 @@ public class RCARF extends AbstractClassifier implements MultiClassClassifier {
         public RCARFBaseLearner(int indexOriginal, Classifier classifier, BasicClassificationPerformanceEvaluator evaluatorInstantiated, 
                     long instancesSeen, boolean useBkgLearner, boolean useDriftDetector, ClassOption driftOption, ClassOption warningOption, 
                     boolean isBackgroundLearner, boolean useRecurringLearner, boolean isOldLearner, 
-                    Window windowProperties, DynamicWindowClassificationPerformanceEvaluator bkgInternalEvaluator, PrintWriter eventsLogFile) {
+                    Window windowProperties, DynamicWindowClassificationPerformanceEvaluator bkgInternalEvaluator, PrintWriter eventsLogFile, int logLevel) {
             init(indexOriginal, classifier, evaluatorInstantiated, instancesSeen, useBkgLearner, 
             		 useDriftDetector, driftOption, warningOption, isBackgroundLearner, useRecurringLearner,  isOldLearner, 
-            		 windowProperties,bkgInternalEvaluator, eventsLogFile);
+            		 windowProperties,bkgInternalEvaluator, eventsLogFile, logLevel);
         }
 
         public void reset() {
@@ -599,12 +619,22 @@ public class RCARF extends AbstractClassifier implements MultiClassClassifier {
 	        		   // 2 Transition to new model
                     this.reset();
                 } 
-            } if (eventsLogFile != null) {
-            		//# instance, model, event, last-error, #models;#active_warnings; models_on_warning, applicable_concepts_from_here, recurring_drift_to_history_id
-            		eventsLogFile.println(instancesSeen+";"+this.indexOriginal+";Train example"+";"
-                					  +this.evaluator.getFractionIncorrectlyClassified()+
-                					  ";"+ConceptHistory.modelsOnWarning.size()+";"+ConceptHistory.getNumberOfActiveWarnings()+
-                					  ";"+ConceptHistory.modelsOnWarning+";"+"N/A"+";N/A"); 
+            } if (eventsLogFile != null && logLevel >= 2) {
+        		//# instance, event, affected_position, affected_classifier_created_on, last-error, #models;#active_warnings; models_on_warning, applicable_concepts_from_here, recurring_drift_to_history_id, drift_to_classifier_created_on
+            		eventsLogFile.println(
+            				String.join(";",
+		            					String.valueOf(instancesSeen), 
+		            					"Train example", 
+		            					String.valueOf(this.indexOriginal), // new, affected_position
+		            					String.valueOf(this.createdOn), // new, affected_classifier_created_on
+		            					String.valueOf(this.evaluator.getFractionIncorrectlyClassified()), 
+		            					String.valueOf(ConceptHistory.modelsOnWarning.size()),
+		            					String.valueOf(ConceptHistory.getNumberOfActiveWarnings()),
+		            					String.valueOf(ConceptHistory.modelsOnWarning),
+		            					"N/A",
+		            					"N/A",
+	            						"N/A") // new, drift_to_classifier_created_on
+            				);
                 //1279,1,WARNING-START,0.74,{F,T,F;F;F;F},N/A
             }
         } 
@@ -623,7 +653,7 @@ public class RCARF extends AbstractClassifier implements MultiClassClassifier {
     			RCARFBaseLearner tmpConcept = new RCARFBaseLearner(this.indexOriginal, 
     					this.classifier.copy(), (BasicClassificationPerformanceEvaluator) this.evaluator.copy(), 
     					this.createdOn, this.useBkgLearner, this.useDriftDetector, this.driftOption, this.warningOption, 
-    					true, this.useRecurringLearner, true, this.windowProperties.copy(), null, eventsLogFile);
+    					true, this.useRecurringLearner, true, this.windowProperties.copy(), null, eventsLogFile, logLevel);
 
     			this.tmpCopyOfModel = new Concept(tmpConcept, 
 	    				this.createdOn, this.evaluator.getPerformanceMeasurements()[0].getValue(), this.lastWarningOn);
@@ -672,11 +702,23 @@ public class RCARF extends AbstractClassifier implements MultiClassClassifier {
 	            // System.out.println("CONCEPT HISTORY STATE AND APPLICABLE FROM THIS WARNING IS: "+ConceptHistory.historyList.keySet().toString());
 	            // System.out.println("-------------------------------------------------");
 	            // System.out.println();
-	            //# instance, model, event, last-error, #models;#active_warnings; models_on_warning, applicable_concepts_from_here, recurring_drift_to_history_id
-	            if (eventsLogFile != null) {
-		            eventsLogFile.println(this.lastWarningOn+";"+this.indexOriginal+";WARNING-START"+";"+this.evaluator.getFractionIncorrectlyClassified()+
-		            		";"+ConceptHistory.modelsOnWarning.size()+";"+ConceptHistory.getNumberOfActiveWarnings()+
-		            		";"+ConceptHistory.modelsOnWarning+";"+ConceptHistory.historyList.keySet().toString()+";N/A");
+        		//# instance, event, affected_position, affected_classifier_id last-error, #models;#active_warnings; models_on_warning, applicable_concepts_from_here, recurring_drift_to_history_id, drift_to_classifier_created_on
+	            if (eventsLogFile != null && logLevel >= 1 ) {
+	            		// Log warnings in file of events
+	            		eventsLogFile.println(
+	            				String.join(";",
+			            					String.valueOf(this.lastWarningOn), // instance_number
+			            					"WARNING-START", // event
+			            					String.valueOf(this.indexOriginal), // new, affected_position
+			            					String.valueOf(this.createdOn), // new, affected_classifier_was_created_on
+			            					String.valueOf(this.evaluator.getFractionIncorrectlyClassified()), // last-error
+			            					String.valueOf(ConceptHistory.modelsOnWarning.size()), // #models;
+			            					String.valueOf(ConceptHistory.getNumberOfActiveWarnings()), // #active_warnings
+			            					String.valueOf(ConceptHistory.modelsOnWarning), // models_on_warning
+			            					ConceptHistory.historyList.keySet().toString(), // applicable_concepts_from_here
+			            					"N/A", // recurring_drift_to_history_id
+			            					"N/A") // new, drift_to_classifier_created_on
+	            				);
 		            //1279,1,WARNING-START,0.74,{F,T,F;F;F;F},...
 	            }
     	        } else {
@@ -724,7 +766,7 @@ public class RCARF extends AbstractClassifier implements MultiClassClassifier {
             // 4 Create a new bkgLearner object
             this.bkgLearner = new RCARFBaseLearner(indexOriginal, bkgClassifier, bkgEvaluator, this.lastWarningOn, 
             		this.useBkgLearner, this.useDriftDetector, this.driftOption, this.warningOption, true, this.useRecurringLearner, false, 
-            									   this.windowProperties, bkgInternalWindowEvaluator, eventsLogFile); // added last inputs parameter by @suarezcetrulo        	
+            									   this.windowProperties, bkgInternalWindowEvaluator, eventsLogFile, logLevel); // added last inputs parameter by @suarezcetrulo        	
         }
      
         // Rank of concept history windows and make decision against bkg model
@@ -750,12 +792,24 @@ public class RCARF extends AbstractClassifier implements MultiClassClassifier {
 		        		//// System.out.println(ranking.size()); // TODO: debugging
 		        		//// System.out.println(getMinKey(ranking)); // TODO: debugging
 	    	            // System.out.println("RECURRING DRIFT RESET IN POSITION #"+this.indexOriginal+" TO MODEL #"+ConceptHistory.historyList.get(getMinKey(ranking)).ensembleIndex); //+this.bkgLearner.indexOriginal);   
-		    			if (eventsLogFile != null) {
-				        //# instance, model, event, last-error, #models;#active_warnings; models_on_warning, applicable_concepts_from_here, recurring_drift_to_history_id
-			    			eventsLogFile.println(this.lastDriftOn+";"+this.indexOriginal+";RECURRING DRIFT"+";"+this.evaluator.getFractionIncorrectlyClassified()+
-			    					";"+ConceptHistory.modelsOnWarning.size()+";"+ConceptHistory.getNumberOfActiveWarnings()+
-			    					";"+ConceptHistory.modelsOnWarning+";"+"N/A"+";"+ConceptHistory.historyList.get(getMinKey(ranking)).ensembleIndex);
-			            //1279,1,WARNING-START,0.74,{F,T,F;F;F;F},...
+		    			if (eventsLogFile != null && logLevel >= 0 ) {
+		            		//# instance, event, affected_position, affected_classifier_created_on, last-error, #models;#active_warnings; models_on_warning, applicable_concepts_from_here, recurring_drift_to_history_id, drift_to_classifier_created_on
+		            		eventsLogFile.println(
+		            				String.join(";",
+				            					String.valueOf(this.lastDriftOn), 
+				            					"RECURRING DRIFT", 
+				            					String.valueOf(this.indexOriginal), // new, affected_position
+				            					String.valueOf(this.createdOn), // new, affected_classifier_was_created_on
+				            					String.valueOf(this.evaluator.getFractionIncorrectlyClassified()), 
+				            					String.valueOf(ConceptHistory.modelsOnWarning.size()),
+				            					String.valueOf(ConceptHistory.getNumberOfActiveWarnings()),
+				            					String.valueOf(ConceptHistory.modelsOnWarning),
+				            					"N/A",
+				            					String.valueOf(ConceptHistory.historyList.get(getMinKey(ranking)).ensembleIndex),
+				            					String.valueOf(ConceptHistory.historyList.get(getMinKey(ranking)).createdOn)) // new, drift_to_classifier_created_on
+		            				);
+			    			
+			    			//1279,1,WARNING-START,0.74,{F,T,F;F;F;F},...
 		    			}
 		    			// Extracts best recurring learner form concept history. It no longer exists in the concept history
 	    	            this.bkgLearner = ConceptHistory.extractConcept(getMinKey(ranking));
@@ -765,22 +819,44 @@ public class RCARF extends AbstractClassifier implements MultiClassClassifier {
 		    			//		((DynamicWindowClassificationPerformanceEvaluator) 
 		    			//				this.bkgLearner.internalWindowEvaluator).getFractionIncorrectlyClassified(this.bkgLearner.indexOriginal));
 	    	            // System.out.println("DRIFT RESET IN MODEL #"+this.indexOriginal+" TO NEW BKG MODEL #"+this.bkgLearner.indexOriginal); 
-		    			if (eventsLogFile != null) {
-			            //# instance, model, event, last-error, #models;#active_warnings; models_on_warning, applicable_concepts_from_here, recurring_drift_to_history_id
-			    			eventsLogFile.println(this.lastDriftOn+";"+this.indexOriginal+";DRIFT TO BKG MODEL"+";"+this.evaluator.getFractionIncorrectlyClassified()+
-			    					";"+ConceptHistory.modelsOnWarning.size()+";"+ConceptHistory.getNumberOfActiveWarnings()+
-			    					";"+ConceptHistory.modelsOnWarning+";"+"N/A"+";"+"N/A");
+		    			if (eventsLogFile != null && logLevel >= 0 ) {
+		            		//# instance, event, affected_position, affected_classifier_created_on, last-error, #models;#active_warnings; models_on_warning, applicable_concepts_from_here, recurring_drift_to_history_id			    			
+		            		eventsLogFile.println(
+		            				String.join(";",
+				            					String.valueOf(this.lastDriftOn), 
+				            					"DRIFT TO BKG MODEL", 
+				            					String.valueOf(this.indexOriginal), // new, affected_position
+				            					String.valueOf(this.createdOn), // new, affected_classifier_created_on
+				            					String.valueOf(this.evaluator.getFractionIncorrectlyClassified()), 
+				            					String.valueOf(ConceptHistory.modelsOnWarning.size()),
+				            					String.valueOf(ConceptHistory.getNumberOfActiveWarnings()),
+				            					String.valueOf(ConceptHistory.modelsOnWarning),
+				            					"N/A",
+				            					"N/A",
+				            					"N/A") // new, drift_to_classifier_created_on
+		            				);
 				        //1279,1,WARNING-START,0.74,{F,T,F;F;F;F},...
 		    			}
 		    		}
     			} else {
     				// System.out.println("0 applicable concepts for model  #"+this.indexOriginal+" in concept history.");
     	            // System.out.println("DRIFT RESET IN POSITION #"+this.indexOriginal+" TO NEW BKG MODEL"); 
-    				if (eventsLogFile != null) {
-		            //# instance, model, event, last-error, #models;#active_warnings; models_on_warning, applicable_concepts_from_here, recurring_drift_to_history_id
-	    				eventsLogFile.println(this.lastDriftOn+";"+this.indexOriginal+";DRIFT TO BKG MODEL"+";"+this.evaluator.getFractionIncorrectlyClassified()+
-	    						";"+ConceptHistory.modelsOnWarning.size()+";"+ConceptHistory.getNumberOfActiveWarnings()+
-	    						";"+ConceptHistory.modelsOnWarning+";"+"N/A"+";"+"N/A");
+    				if (eventsLogFile != null && logLevel >= 0 ) {
+                		//# instance, event, affected_position, affected_classifier_id last-error, #models;#active_warnings; models_on_warning, applicable_concepts_from_here, recurring_drift_to_history_id	    				
+	            		eventsLogFile.println(
+	            				String.join(";",
+			            					String.valueOf(this.lastDriftOn), 
+			            					"DRIFT TO BKG MODEL", 
+			            					String.valueOf(this.indexOriginal), // new, affected_position
+			            					String.valueOf(this.createdOn), // new, affected_classifier_created_on
+			            					String.valueOf(this.evaluator.getFractionIncorrectlyClassified()), 
+			            					String.valueOf(ConceptHistory.modelsOnWarning.size()),
+			            					String.valueOf(ConceptHistory.getNumberOfActiveWarnings()),
+			            					String.valueOf(ConceptHistory.modelsOnWarning),
+			            					"N/A",
+			            					"N/A",
+			            					"N/A")
+	            				);
     				}
     			}
         }
