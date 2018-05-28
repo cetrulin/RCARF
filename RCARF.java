@@ -126,10 +126,10 @@ public class RCARF extends AbstractClassifier implements MultiClassClassifier {
         "Total number of concurrent jobs used for processing (-1 = as much as possible, 0 = do not use multithreading)", 1, -1, Integer.MAX_VALUE);
     
     public ClassOption driftDetectionMethodOption = new ClassOption("driftDetectionMethod", 'x',
-        "Change detector for drifts and its parameters", ChangeDetector.class, "eADWINChangeDetector -a 1.0E-5");
+        "Change detector for drifts and its parameters", ChangeDetector.class, "ADWINChangeDetector -a 1.0E-5");
 
     public ClassOption warningDetectionMethodOption = new ClassOption("warningDetectionMethod", 'p',
-        "Change detector for warnings (start training bkg learner)", ChangeDetector.class, "eADWINChangeDetector -a 1.0E-4");
+        "Change detector for warnings (start training bkg learner)", ChangeDetector.class, "ADWINChangeDetector -a 1.0E-4");
     
     public FlagOption disableWeightedVote = new FlagOption("disableWeightedVote", 'w', 
             "Should use weighted voting?");
