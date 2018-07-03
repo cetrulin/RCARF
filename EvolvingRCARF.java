@@ -125,12 +125,54 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
     public IntOption numberOfJobsOption = new IntOption("numberOfJobs", 'j',
         "Total number of concurrent jobs used for processing (-1 = as much as possible, 0 = do not use multithreading)", 1, -1, Integer.MAX_VALUE);
     
+    /*********************************/
+    // These two won't be really used in the next test rounds due to the config almost tree-specific
+    
     public ClassOption driftDetectionMethodOption = new ClassOption("driftDetectionMethod", 'x',
         "Change detector for drifts and its parameters", EvolvingChangeDetector.class, "eADWINChangeDetector -a 1.0E-5");
 
     public ClassOption warningDetectionMethodOption = new ClassOption("warningDetectionMethod", 'p',
         "Change detector for warnings (start training bkg learner)", EvolvingChangeDetector.class, "eADWINChangeDetector -a 1.0E-4");
     
+    /*********************************
+	 *    P1: delta_drift=0.00001, delta_warning = 0.0001 (moderate)
+	 *    P2: delta_drift=0.0001, delta_warning = 0.001
+	 *    P3: delta_drift=0.001, delta_warning = 0.01 (fast)
+	 *    P4: delta_drift=0.01, delta_warning = 0.1 
+	 *    P5: delta_drift=0.1, delta_warning = 0.2 (más o menos es el ultra) 
+     *********************************/
+    
+    // P1 = Moderate
+    double p1_drift = 0.00001;
+    double p1_warning = 0.0001;
+    double [] p1 = {p1_drift,p1_warning};
+    
+    // P2
+    double p2_drift = 0.0001;
+    double p2_warning = 0.001;
+    double [] p2 = {p2_drift,p2_warning};
+    
+    // P3 = Fast
+    double p3_drift = 0.001;
+    double p3_warning = 0.01;
+    double [] p3 = {p3_drift,p3_warning};
+    
+    // P4
+    double p4_drift = 0.01;
+    double p4_warning = 0.1;
+    double [] p4 = {p4_drift,p4_warning};
+    
+    // P5 = Ultra
+    double p5_drift = 0.1;
+    double p5_warning = 0.2;
+    double [] p5 = {p5_drift,p5_warning};
+    
+    // p_full_set
+    double [][] p_deltas = {p1, p2, p3, p4, p5};
+    int p_allocation = this.ensembleSizeOption.getValue() / p_deltas.length; // TO-DO: this idea doesn't cover well scenarios where the size is not a multiple.
+        
+    /*********************************/
+   
     public FlagOption disableWeightedVote = new FlagOption("disableWeightedVote", 'w', 
             "Should use weighted voting?");
     
@@ -402,6 +444,17 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
         			//System.out.println("The current base learner supports feature subspace. Appyling it to classifier: #"+(i+1));
         			((ARFHoeffdingTree) learner).subspaceSizeOption.setValue(this.subspaceSize);
         		}
+        		
+        		// What ADWIN intervals to use depending on ensemble position. 
+        		// asuarez: TO-DO. Check if some p's are not ever used again after being sent to the Concept History
+        		int p_config = ((int) Math.floor(i/p_allocation)) + 1;
+        		
+        		// Set ADWIN interval parameters depending on the ensemble's position
+        	    ClassOption p_driftDetectionMethodOption = new ClassOption("driftDetectionMethod", 'x',
+        	            "Change detector for drifts and its parameters", EvolvingChangeDetector.class, "eADWINChangeDetector -a " + p_deltas[p_config][0]);
+        	    ClassOption p_warningDetectionMethodOption = new ClassOption("warningDetectionMethod", 'p',
+        	            "Change detector for warnings (start training bkg learner)", EvolvingChangeDetector.class, "eADWINChangeDetector -a " + p_deltas[p_config][1]);
+        		
             this.ensemble[i] = new RCARFBaseLearner(
                 i, 
                 (Classifier) learner.copy(), 
@@ -409,8 +462,8 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
                 this.instancesSeen, 
                 ! this.disableBackgroundLearnerOption.isSet(),
                 ! this.disableDriftDetectionOption.isSet(), 
-                driftDetectionMethodOption,
-                warningDetectionMethodOption,
+                p_driftDetectionMethodOption,
+                p_warningDetectionMethodOption,
                 false,
                 ! this.disableRecurringDriftDetectionOption.isSet(),
                 false, // @suarezcetrulo : first model is not old. An old model (retrieved from the concept history).
