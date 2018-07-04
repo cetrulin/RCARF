@@ -129,10 +129,10 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
     // These two won't be really used in the next test rounds due to the config almost tree-specific
     
     public ClassOption driftDetectionMethodOption = new ClassOption("driftDetectionMethod", 'x',
-        "Change detector for drifts and its parameters", EvolvingChangeDetector.class, "eADWINChangeDetector -a 1.0E-5");
+        "Change detector for drifts and its parameters", EvolvingChangeDetector.class, "EvolvingADWINChangeDetector -a 1.0E-5");
 
     public ClassOption warningDetectionMethodOption = new ClassOption("warningDetectionMethod", 'p',
-        "Change detector for warnings (start training bkg learner)", EvolvingChangeDetector.class, "eADWINChangeDetector -a 1.0E-4");
+        "Change detector for warnings (start training bkg learner)", EvolvingChangeDetector.class, "EvolvingADWINChangeDetector -a 1.0E-4");
     
     /*********************************
 	 *    P1: delta_drift=0.00001, delta_warning = 0.0001 (moderate)
@@ -447,13 +447,13 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
         		
         		// What ADWIN intervals to use depending on ensemble position. 
         		// asuarez: TO-DO. Check if some p's are not ever used again after being sent to the Concept History
-        		int p_config = ((int) Math.floor(i/p_allocation)) + 1;
-        		
+        		int p_config = ((int) Math.floor((i)/(p_allocation+1))); // + 1;
+
         		// Set ADWIN interval parameters depending on the ensemble's position
         	    ClassOption p_driftDetectionMethodOption = new ClassOption("driftDetectionMethod", 'x',
-        	            "Change detector for drifts and its parameters", EvolvingChangeDetector.class, "eADWINChangeDetector -a " + p_deltas[p_config][0]);
+        	            "Change detector for drifts and its parameters", EvolvingChangeDetector.class, "EvolvingADWINChangeDetector -a " + p_deltas[p_config][0]);
         	    ClassOption p_warningDetectionMethodOption = new ClassOption("warningDetectionMethod", 'p',
-        	            "Change detector for warnings (start training bkg learner)", EvolvingChangeDetector.class, "eADWINChangeDetector -a " + p_deltas[p_config][1]);
+        	            "Change detector for warnings (start training bkg learner)", EvolvingChangeDetector.class, "EvolvingADWINChangeDetector -a " + p_deltas[p_config][1]);
         		
             this.ensemble[i] = new RCARFBaseLearner(
                 i, 
@@ -561,7 +561,7 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
             }
         }
 
-        // last inputs parameters added by @suarezcetrulo
+        // Last inputs parameters added by @suarezcetrulo
         public RCARFBaseLearner(int indexOriginal, Classifier classifier, BasicClassificationPerformanceEvaluator evaluatorInstantiated, 
                     long instancesSeen, boolean useBkgLearner, boolean useDriftDetector, ClassOption driftOption, ClassOption warningOption, 
                     boolean isBackgroundLearner, boolean useRecurringLearner, boolean isOldLearner, 
@@ -621,6 +621,7 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
                 this.evaluator = this.bkgLearner.evaluator;
                 this.createdOn = this.bkgLearner.createdOn;
                 this.bkgLearner = null; 
+                // warning and drift options in a background tree will still remain the same
         		} 
             else { 
                 this.classifier.resetLearning();
