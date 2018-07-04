@@ -608,6 +608,10 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
        	           // 2.3 Inherit window properties / clear internal evaluator
                    this.windowProperties = this.bkgLearner.windowProperties; // internalEvaluator shouldnt be inherited
                    this.internalWindowEvaluator = null; // only a double check, as it should be always null (only used in background + old concept Learners)
+                   
+                   // 2.4 Inherit warning and drift options (as for Concept History classifiers it may differ from the current one)
+                   this.driftOption = this.bkgLearner.driftOption;
+                   this.warningOption = this.bkgLearner.warningOption;
 
         		   }
 	            // 2.3 New active model is the best retrieved old model / clear background learner
@@ -865,7 +869,7 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
 			    			//1279,1,WARNING-START,0.74,{F,T,F;F;F;F},...
 		    			}
 		    			// Extracts best recurring learner form concept history. It no longer exists in the concept history
-	    	            this.bkgLearner = ConceptHistory.extractConcept(getMinKey(ranking));
+	    	            this.bkgLearner = ConceptHistory.extractConcept(getMinKey(ranking)); // this also retrieves warning and drift options
 		    		} else {
 		    			// System.out.println("The minimum recurrent concept error: "+
 		    			//		Collections.min(ranking.values())+" is not better than the bbk learner one: "+
