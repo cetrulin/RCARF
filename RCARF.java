@@ -256,7 +256,7 @@ public class RCARF extends AbstractClassifier implements MultiClassClassifier {
             if (k > 0) {
                 if(this.executor != null) {
                     TrainingRunnable trainer = new TrainingRunnable(this.ensemble[i], 
-                        instance, k, this.instancesSeen);
+                        instance, k, this.instancesSeen);  // asuarez: k is only an instance weight that increases when the instance is missclassified. this is a bagging strategy by Oza 2005.
                     trainers.add(trainer);
                 }
                 else { // SINGLE_THREAD is in-place... 
@@ -342,6 +342,9 @@ public class RCARF extends AbstractClassifier implements MultiClassClassifier {
 		            					"instance_number", 
 		            					"event_type", 
 		            					"affected_position", //former 'model'
+		            					"voting_weight", // voting weight for the three that presents an event. new 07/07/2018
+		            					"warning_setting", // new 07/07/2018
+		            					"drift_setting", // new 07/07/2018
 		            					"affected_classifier_created_on", //new
 		            					"error_percentage", 
 		            					"amount_of_models",
@@ -398,8 +401,9 @@ public class RCARF extends AbstractClassifier implements MultiClassClassifier {
         learner.resetLearning();
         
         for(int i = 0 ; i < ensembleSize ; ++i) {	
+        	    // asuarez TO-DO: bagging should be in this code and not in the code of the trees for ARF. this is only a provisional fix.
         		if(learner.getPurposeString().contains("Adaptive Random Forest Hoeffding Tree for data streams.")) {
-        			//System.out.println("The current base learner supports feature subspace. Appyling it to classifier: #"+(i+1));
+        			//System.out.println("The current base learner supports feature subspace. Applying it to classifier: #"+(i+1));
         			((ARFHoeffdingTree) learner).subspaceSizeOption.setValue(this.subspaceSize);
         		}
             this.ensemble[i] = new RCARFBaseLearner(
@@ -579,7 +583,7 @@ public class RCARF extends AbstractClassifier implements MultiClassClassifier {
             // Training active models and background models (if they exist). Retrieved old models are not trained.
             this.classifier.trainOnInstance(weightedInstance);            
             if(this.bkgLearner != null) this.bkgLearner.classifier.trainOnInstance(instance);
-        
+            
             //boolean toLog = true;            
             // Should it use a drift detector? Also, is it a backgroundLearner? If so, then do not "incept" another one. 
             if(this.useDriftDetector && !this.isBackgroundLearner) {
@@ -626,6 +630,9 @@ public class RCARF extends AbstractClassifier implements MultiClassClassifier {
 		            					String.valueOf(instancesSeen), 
 		            					"Train example", 
 		            					String.valueOf(this.indexOriginal), // new, affected_position
+		            					String.valueOf(this.evaluator.getPerformanceMeasurements()[1].getValue()), // VOTING_WEIGHT of the affected position (this is as represented in getVotesForInstance for the global ensemble), // new 07/07/2018
+		            					this.warningOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""), // WARNING SETTING of the affected position. new 07/07/2018
+		            					this.driftOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""), // DRIFT SETTING of the affected position. new 07/07/2018
 		            					String.valueOf(this.createdOn), // new, affected_classifier_created_on
 		            					String.valueOf(this.evaluator.getFractionIncorrectlyClassified()), 
 		            					String.valueOf(ConceptHistory.modelsOnWarning.size()),
@@ -636,6 +643,8 @@ public class RCARF extends AbstractClassifier implements MultiClassClassifier {
 	            						"N/A") // new, drift_to_classifier_created_on
             				);
                 //1279,1,WARNING-START,0.74,{F,T,F;F;F;F},N/A
+            		// test:asuarez TO-DO - remove this.
+            		this.warningDetectionMethod.getOutput();
             }
         } 
         
@@ -710,6 +719,9 @@ public class RCARF extends AbstractClassifier implements MultiClassClassifier {
 			            					String.valueOf(this.lastWarningOn), // instance_number
 			            					"WARNING-START", // event
 			            					String.valueOf(this.indexOriginal), // new, affected_position
+			            					String.valueOf(this.evaluator.getPerformanceMeasurements()[1].getValue()), // VOTING_WEIGHT of the affected position (this is as represented in getVotesForInstance for the global ensemble), // new 07/07/2018
+			            					this.warningOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""), // WARNING SETTING of the affected position. new 07/07/2018
+			            					this.driftOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""), // DRIFT SETTING of the affected position. new 07/07/2018
 			            					String.valueOf(this.createdOn), // new, affected_classifier_was_created_on
 			            					String.valueOf(this.evaluator.getFractionIncorrectlyClassified()), // last-error
 			            					String.valueOf(ConceptHistory.modelsOnWarning.size()), // #models;
@@ -799,6 +811,9 @@ public class RCARF extends AbstractClassifier implements MultiClassClassifier {
 				            					String.valueOf(this.lastDriftOn), 
 				            					"RECURRING DRIFT", 
 				            					String.valueOf(this.indexOriginal), // new, affected_position
+				            					String.valueOf(this.evaluator.getPerformanceMeasurements()[1].getValue()), // VOTING_WEIGHT of the affected position (this is as represented in getVotesForInstance for the global ensemble), // new 07/07/2018
+				            					this.warningOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""), // WARNING SETTING of the affected position. new 07/07/2018
+				            					this.driftOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""), // DRIFT SETTING of the affected position. new 07/07/2018
 				            					String.valueOf(this.createdOn), // new, affected_classifier_was_created_on
 				            					String.valueOf(this.evaluator.getFractionIncorrectlyClassified()), 
 				            					String.valueOf(ConceptHistory.modelsOnWarning.size()),
@@ -826,6 +841,9 @@ public class RCARF extends AbstractClassifier implements MultiClassClassifier {
 				            					String.valueOf(this.lastDriftOn), 
 				            					"DRIFT TO BKG MODEL", 
 				            					String.valueOf(this.indexOriginal), // new, affected_position
+				            					String.valueOf(this.evaluator.getPerformanceMeasurements()[1].getValue()), // VOTING_WEIGHT of the affected position (this is as represented in getVotesForInstance for the global ensemble), // new 07/07/2018
+				            					this.warningOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""), // WARNING SETTING of the affected position. new 07/07/2018
+				            					this.driftOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""), // DRIFT SETTING of the affected position. new 07/07/2018
 				            					String.valueOf(this.createdOn), // new, affected_classifier_created_on
 				            					String.valueOf(this.evaluator.getFractionIncorrectlyClassified()), 
 				            					String.valueOf(ConceptHistory.modelsOnWarning.size()),
@@ -848,6 +866,9 @@ public class RCARF extends AbstractClassifier implements MultiClassClassifier {
 			            					String.valueOf(this.lastDriftOn), 
 			            					"DRIFT TO BKG MODEL", 
 			            					String.valueOf(this.indexOriginal), // new, affected_position
+			            					String.valueOf(this.evaluator.getPerformanceMeasurements()[1].getValue()), // VOTING_WEIGHT of the affected position (this is as represented in getVotesForInstance for the global ensemble), // new 07/07/2018
+			            					this.warningOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""), // WARNING SETTING of the affected position. new 07/07/2018
+			            					this.driftOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""), // DRIFT SETTING of the affected position. new 07/07/2018
 			            					String.valueOf(this.createdOn), // new, affected_classifier_created_on
 			            					String.valueOf(this.evaluator.getFractionIncorrectlyClassified()), 
 			            					String.valueOf(ConceptHistory.modelsOnWarning.size()),
