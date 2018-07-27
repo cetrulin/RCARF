@@ -693,9 +693,9 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
 		            					this.driftOption.getValueAsCLIString().replace("EvolvingADWINChangeDetector -a ", ""), // DRIFT SETTING of the affected position. new 07/07/2018
 		            					String.valueOf(this.createdOn), // new, affected_classifier_created_on
 		            					String.valueOf(this.evaluator.getFractionIncorrectlyClassified()), 
-		            					String.valueOf(ConceptHistory.modelsOnWarning.size()),
-		            					String.valueOf(ConceptHistory.getNumberOfActiveWarnings()),
-		            					String.valueOf(ConceptHistory.modelsOnWarning),
+		            					String.valueOf(this.useRecurringLearner ? ConceptHistory.modelsOnWarning.size() : "N/A"),
+		            					String.valueOf(this.useRecurringLearner ? ConceptHistory.getNumberOfActiveWarnings() : "N/A"),
+		            					String.valueOf(this.useRecurringLearner ? ConceptHistory.modelsOnWarning : "N/A"),
 		            					"N/A",
 		            					"N/A",
 	            						"N/A") // new, drift_to_classifier_created_on
@@ -780,10 +780,10 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
 			            					this.driftOption.getValueAsCLIString().replace("EvolvingADWINChangeDetector -a ", ""), // DRIFT SETTING of the affected position. new 07/07/2018
 			            					String.valueOf(this.createdOn), // new, affected_classifier_was_created_on
 			            					String.valueOf(this.evaluator.getFractionIncorrectlyClassified()), // last-error
-			            					String.valueOf(ConceptHistory.modelsOnWarning.size()), // #models;
-			            					String.valueOf(ConceptHistory.getNumberOfActiveWarnings()), // #active_warnings
-			            					String.valueOf(ConceptHistory.modelsOnWarning), // models_on_warning
-			            					ConceptHistory.historyList.keySet().toString(), // applicable_concepts_from_here
+			            					String.valueOf(this.useRecurringLearner ? ConceptHistory.modelsOnWarning.size() : "N/A"), // #models;
+			            					String.valueOf(this.useRecurringLearner ? ConceptHistory.getNumberOfActiveWarnings() : "N/A"), // #active_warnings
+			            					String.valueOf(this.useRecurringLearner ? ConceptHistory.modelsOnWarning : "N/A"), // models_on_warning
+			            					this.useRecurringLearner ? ConceptHistory.historyList.keySet().toString() : "N/A", // applicable_concepts_from_here
 			            					"N/A", // recurring_drift_to_history_id
 			            					"N/A") // new, drift_to_classifier_created_on
 	            				);
@@ -872,9 +872,9 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
 				            					this.driftOption.getValueAsCLIString().replace("EvolvingADWINChangeDetector -a ", ""), // DRIFT SETTING of the affected position. new 07/07/2018
 				            					String.valueOf(this.createdOn), // new, affected_classifier_was_created_on
 				            					String.valueOf(this.evaluator.getFractionIncorrectlyClassified()), 
-				            					String.valueOf(ConceptHistory.modelsOnWarning.size()),
-				            					String.valueOf(ConceptHistory.getNumberOfActiveWarnings()),
-				            					String.valueOf(ConceptHistory.modelsOnWarning),
+				            					String.valueOf(this.useRecurringLearner ? ConceptHistory.modelsOnWarning.size() : "N/A"), // #models;
+				            					String.valueOf(this.useRecurringLearner ? ConceptHistory.getNumberOfActiveWarnings() : "N/A"), // #active_warnings
+				            					String.valueOf(this.useRecurringLearner ? ConceptHistory.modelsOnWarning : "N/A"), // models_on_warning
 				            					"N/A",
 				            					String.valueOf(ConceptHistory.historyList.get(getMinKey(ranking)).ensembleIndex),
 				            					String.valueOf(ConceptHistory.historyList.get(getMinKey(ranking)).createdOn)) // new, drift_to_classifier_created_on
@@ -902,9 +902,9 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
 				            					this.driftOption.getValueAsCLIString().replace("EvolvingADWINChangeDetector -a ", ""), // DRIFT SETTING of the affected position. new 07/07/2018
 				            					String.valueOf(this.createdOn), // new, affected_classifier_created_on
 				            					String.valueOf(this.evaluator.getFractionIncorrectlyClassified()), 
-				            					String.valueOf(ConceptHistory.modelsOnWarning.size()),
-				            					String.valueOf(ConceptHistory.getNumberOfActiveWarnings()),
-				            					String.valueOf(ConceptHistory.modelsOnWarning),
+				            					String.valueOf(this.useRecurringLearner ? ConceptHistory.modelsOnWarning.size() : "N/A"), // #models;
+				            					String.valueOf(this.useRecurringLearner ? ConceptHistory.getNumberOfActiveWarnings() : "N/A"), // #active_warnings
+				            					String.valueOf(this.useRecurringLearner ? ConceptHistory.modelsOnWarning : "N/A"), // models_on_warning
 				            					"N/A",
 				            					"N/A",
 				            					"N/A") // new, drift_to_classifier_created_on
@@ -927,9 +927,9 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
 			            					this.driftOption.getValueAsCLIString().replace("EvolvingADWINChangeDetector -a ", ""), // DRIFT SETTING of the affected position. new 07/07/2018
 			            					String.valueOf(this.createdOn), // new, affected_classifier_created_on
 			            					String.valueOf(this.evaluator.getFractionIncorrectlyClassified()), 
-			            					String.valueOf(ConceptHistory.modelsOnWarning.size()),
-			            					String.valueOf(ConceptHistory.getNumberOfActiveWarnings()),
-			            					String.valueOf(ConceptHistory.modelsOnWarning),
+			            					String.valueOf(this.useRecurringLearner ? ConceptHistory.modelsOnWarning.size() : "N/A"), // #models;
+			            					String.valueOf(this.useRecurringLearner ? ConceptHistory.getNumberOfActiveWarnings() : "N/A"), // #active_warnings
+			            					String.valueOf(this.useRecurringLearner ? ConceptHistory.modelsOnWarning : "N/A"), // models_on_warning
 			            					"N/A",
 			            					"N/A",
 			            					"N/A")
