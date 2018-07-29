@@ -660,7 +660,7 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
           		   // 1 Compare DT results using Window method and pick the best one between concept history and bkg model.
           		   // It returns the best model in the object of the bkgLearner
                      if (this.useRecurringLearner)  selectNewActiveModel();
-                     else if (eventsLogFile != null && logLevel >= 1 ) logEvent(getWarningEvent()); // Print bkg drifts in log also for ARF
+                     else if (eventsLogFile != null && logLevel >= 1 ) logEvent(getBkgDriftEvent()); // Print bkg drifts in log also for ARF
                     
 	        		   // 2 Transition to new model
                     this.reset();
