@@ -625,7 +625,6 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
             this.classifier.trainOnInstance(weightedInstance);            
             if(this.bkgLearner != null) this.bkgLearner.classifier.trainOnInstance(instance);
         
-            //boolean toLog = true;            
             // Should it use a drift detector? Also, is it a backgroundLearner? If so, then do not "incept" another one. 
             if(this.useDriftDetector && !this.isBackgroundLearner) {
                 boolean correctlyClassifies = this.classifier.correctlyClassifies(instance);
@@ -638,7 +637,6 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
                     if(this.warningDetectionMethod.getChange()) {
                         this.lastWarningOn = instancesSeen;
                         this.numberOfWarningsDetected++;
-                        //toLog = false;
 
 	    				   // 1 Update last error and make a backup of the current classifier in a concept object (the active one will be in use until the Drift is confirmed). 
                         // As there is no false alarms explicit mechanism (bkgLeaners keep running till replaced), this has been moved here.
@@ -655,7 +653,6 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
                 if(this.driftDetectionMethod.getChange()) {
                     this.lastDriftOn = instancesSeen;
                     this.numberOfDriftsDetected++;
-                    //toLog = false;
                     
           		   // 1 Compare DT results using Window method and pick the best one between concept history and bkg model.
           		   // It returns the best model in the object of the bkgLearner
