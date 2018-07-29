@@ -679,27 +679,18 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
           		   // It returns the best model in the object of the bkgLearner
                      if (this.useRecurringLearner)  selectNewActiveModel();
                      else {
-                    	 	// Print bkg drift for ARF
+                    	 	// Print bkg drifts in ARF
 	 		    			if (eventsLogFile != null && logLevel >= 0 ) {
 			            		//# instance, event, affected_position, affected_classifier_created_on, last-error, #models;#active_warnings; models_on_warning, applicable_concepts_from_here, recurring_drift_to_history_id			    			
-			            		eventsLogFile.println(
-			            				String.join(";",
-					            					String.valueOf(this.lastDriftOn), 
-					            					"DRIFT TO BKG MODEL", 
-					            					String.valueOf(this.indexOriginal), // new, affected_position
-					            					String.valueOf(this.evaluator.getPerformanceMeasurements()[1].getValue()), // VOTING_WEIGHT of the affected position (this is as represented in getVotesForInstance for the global ensemble), // new 07/07/2018
-					            					this.warningOption.getValueAsCLIString().replace("EvolvingADWINChangeDetector -a ", ""), // WARNING SETTING of the affected position. new 07/07/2018
-					            					this.driftOption.getValueAsCLIString().replace("EvolvingADWINChangeDetector -a ", ""), // DRIFT SETTING of the affected position. new 07/07/2018
-					            					String.valueOf(this.createdOn), // new, affected_classifier_created_on
-					            					String.valueOf(this.evaluator.getFractionIncorrectlyClassified()), 
-					            					String.valueOf(this.useRecurringLearner ? ConceptHistory.modelsOnWarning.size() : "N/A"), // #models;
-					            					String.valueOf(this.useRecurringLearner ? ConceptHistory.getNumberOfActiveWarnings() : "N/A"), // #active_warnings
-					            					String.valueOf(this.useRecurringLearner ? ConceptHistory.modelsOnWarning : "N/A"), // models_on_warning
-					            					"N/A",
-					            					"N/A",
-					            					"N/A") // new, drift_to_classifier_created_on
-			            				);
-			            		eventsLogFile.flush();
+	 		    				logEvent(String.valueOf(this.lastDriftOn), "DRIFT TO BKG MODEL", String.valueOf(this.indexOriginal),
+		            					String.valueOf(this.evaluator.getPerformanceMeasurements()[1].getValue()), 
+		            					this.warningOption.getValueAsCLIString().replace("EvolvingADWINChangeDetector -a ", ""),
+		            					this.driftOption.getValueAsCLIString().replace("EvolvingADWINChangeDetector -a ", ""),
+		            					String.valueOf(this.createdOn), String.valueOf(this.evaluator.getFractionIncorrectlyClassified()), 
+		            					String.valueOf(this.useRecurringLearner ? ConceptHistory.modelsOnWarning.size() : "N/A"),
+		            					String.valueOf(this.useRecurringLearner ? ConceptHistory.getNumberOfActiveWarnings() : "N/A"), 
+		            					String.valueOf(this.useRecurringLearner ? ConceptHistory.modelsOnWarning : "N/A"),
+		            					"N/A", "N/A", "N/A");
 					        //1279,1,WARNING-START,0.74,{F,T,F;F;F;F},...
 			    			}
                      }
@@ -709,24 +700,15 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
                 } 
             } if (eventsLogFile != null && logLevel >= 2) {
         		//# instance, event, affected_position, affected_classifier_created_on, last-error, #models;#active_warnings; models_on_warning, applicable_concepts_from_here, recurring_drift_to_history_id, drift_to_classifier_created_on
-            		eventsLogFile.println(
-            				String.join(";",
-		            					String.valueOf(instancesSeen), 
-		            					"Train example", 
-		            					String.valueOf(this.indexOriginal), // new, affected_position
-		            					String.valueOf(this.evaluator.getPerformanceMeasurements()[1].getValue()), // VOTING_WEIGHT of the affected position (this is as represented in getVotesForInstance for the global ensemble), // new 07/07/2018
-		            					this.warningOption.getValueAsCLIString().replace("EvolvingADWINChangeDetector -a ", ""), // WARNING SETTING of the affected position. new 07/07/2018
-		            					this.driftOption.getValueAsCLIString().replace("EvolvingADWINChangeDetector -a ", ""), // DRIFT SETTING of the affected position. new 07/07/2018
-		            					String.valueOf(this.createdOn), // new, affected_classifier_created_on
-		            					String.valueOf(this.evaluator.getFractionIncorrectlyClassified()), 
-		            					String.valueOf(this.useRecurringLearner ? ConceptHistory.modelsOnWarning.size() : "N/A"),
-		            					String.valueOf(this.useRecurringLearner ? ConceptHistory.getNumberOfActiveWarnings() : "N/A"),
-		            					String.valueOf(this.useRecurringLearner ? ConceptHistory.modelsOnWarning : "N/A"),
-		            					"N/A",
-		            					"N/A",
-	            						"N/A") // new, drift_to_classifier_created_on
-            				);
-            		eventsLogFile.flush();
+            		logEvent(String.valueOf(instancesSeen), "Train example", String.valueOf(this.indexOriginal), 
+        					String.valueOf(this.evaluator.getPerformanceMeasurements()[1].getValue()), 
+        					this.warningOption.getValueAsCLIString().replace("EvolvingADWINChangeDetector -a ", ""), 
+        					this.driftOption.getValueAsCLIString().replace("EvolvingADWINChangeDetector -a ", ""), 
+        					String.valueOf(this.createdOn), String.valueOf(this.evaluator.getFractionIncorrectlyClassified()), 
+        					String.valueOf(this.useRecurringLearner ? ConceptHistory.modelsOnWarning.size() : "N/A"),
+        					String.valueOf(this.useRecurringLearner ? ConceptHistory.getNumberOfActiveWarnings() : "N/A"),
+        					String.valueOf(this.useRecurringLearner ? ConceptHistory.modelsOnWarning : "N/A"),
+        					"N/A", "N/A", "N/A");
                 //1279,1,WARNING-START,0.74,{F,T,F;F;F;F},N/A
             }
         } 
@@ -791,34 +773,23 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
 
     	        } 
     	        
-	            // System.out.println();
-	            // System.out.println("-------------------------------------------------");
-	            // System.out.println("WARNING ON IN MODEL #"+this.indexOriginal+". Warning flag status (activeModelPos, Flag): "+ConceptHistory.modelsOnWarning);
-	            // System.out.println("CONCEPT HISTORY STATE AND APPLICABLE FROM THIS WARNING IS: "+ConceptHistory.historyList.keySet().toString());
-	            // System.out.println("-------------------------------------------------");
-	            // System.out.println();
-        		//# instance, event, affected_position, affected_classifier_id last-error, #models;#active_warnings; models_on_warning, applicable_concepts_from_here, recurring_drift_to_history_id, drift_to_classifier_created_on
+            // System.out.println();
+            // System.out.println("-------------------------------------------------");
+            // System.out.println("WARNING ON IN MODEL #"+this.indexOriginal+". Warning flag status (activeModelPos, Flag): "+ConceptHistory.modelsOnWarning);
+            // System.out.println("CONCEPT HISTORY STATE AND APPLICABLE FROM THIS WARNING IS: "+ConceptHistory.historyList.keySet().toString());
+            // System.out.println("-------------------------------------------------");
+            // System.out.println();
 	            
 	            if (eventsLogFile != null && logLevel >= 1 ) {
-	            		// Log warnings in file of events
-	            		eventsLogFile.println(
-	            				String.join(";",
-			            					String.valueOf(this.lastWarningOn), // instance_number
-			            					"WARNING-START", // event
-			            					String.valueOf(this.indexOriginal), // new, affected_position
-			            					String.valueOf(this.evaluator.getPerformanceMeasurements()[1].getValue()), // VOTING_WEIGHT of the affected position (this is as represented in getVotesForInstance for the global ensemble), // new 07/07/2018
-			            					this.warningOption.getValueAsCLIString().replace("EvolvingADWINChangeDetector -a ", ""), // WARNING SETTING of the affected position. new 07/07/2018
-			            					this.driftOption.getValueAsCLIString().replace("EvolvingADWINChangeDetector -a ", ""), // DRIFT SETTING of the affected position. new 07/07/2018
-			            					String.valueOf(this.createdOn), // new, affected_classifier_was_created_on
-			            					String.valueOf(this.evaluator.getFractionIncorrectlyClassified()), // last-error
-			            					String.valueOf(this.useRecurringLearner ? ConceptHistory.modelsOnWarning.size() : "N/A"), // #models;
-			            					String.valueOf(this.useRecurringLearner ? ConceptHistory.getNumberOfActiveWarnings() : "N/A"), // #active_warnings
-			            					String.valueOf(this.useRecurringLearner ? ConceptHistory.modelsOnWarning : "N/A"), // models_on_warning
-			            					this.useRecurringLearner ? ConceptHistory.historyList.keySet().toString() : "N/A", // applicable_concepts_from_here
-			            					"N/A", // recurring_drift_to_history_id
-			            					"N/A") // new, drift_to_classifier_created_on
-	            				);
-	            		eventsLogFile.flush();
+	            		logEvent(String.valueOf(this.lastWarningOn), "WARNING-START", // event
+        					String.valueOf(this.indexOriginal), String.valueOf(this.evaluator.getPerformanceMeasurements()[1].getValue()), 
+        					this.warningOption.getValueAsCLIString().replace("EvolvingADWINChangeDetector -a ", ""),
+        					this.driftOption.getValueAsCLIString().replace("EvolvingADWINChangeDetector -a ", ""), 
+        					String.valueOf(this.createdOn), String.valueOf(this.evaluator.getFractionIncorrectlyClassified()), 
+        					String.valueOf(this.useRecurringLearner ? ConceptHistory.modelsOnWarning.size() : "N/A"),
+        					String.valueOf(this.useRecurringLearner ? ConceptHistory.getNumberOfActiveWarnings() : "N/A"),
+        					String.valueOf(this.useRecurringLearner ? ConceptHistory.modelsOnWarning : "N/A"), 
+        					this.useRecurringLearner ? ConceptHistory.historyList.keySet().toString() : "N/A", "N/A", "N/A");
 		            //1279,1,WARNING-START,0.74,{F,T,F;F;F;F},...
 	            }
 
@@ -887,24 +858,16 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
 	    	            // System.out.println("RECURRING DRIFT RESET IN POSITION #"+this.indexOriginal+" TO MODEL #"+ConceptHistory.historyList.get(getMinKey(ranking)).ensembleIndex); //+this.bkgLearner.indexOriginal);   
 		    			if (eventsLogFile != null && logLevel >= 0 ) {
 		            		//# instance, event, affected_position, affected_classifier_created_on, last-error, #models;#active_warnings; models_on_warning, applicable_concepts_from_here, recurring_drift_to_history_id, drift_to_classifier_created_on
-		            		eventsLogFile.println(
-		            				String.join(";",
-				            					String.valueOf(this.lastDriftOn), 
-				            					"RECURRING DRIFT", 
-				            					String.valueOf(this.indexOriginal), // new, affected_position
-				            					String.valueOf(this.evaluator.getPerformanceMeasurements()[1].getValue()), // VOTING_WEIGHT of the affected position (this is as represented in getVotesForInstance for the global ensemble), // new 07/07/2018
-				            					this.warningOption.getValueAsCLIString().replace("EvolvingADWINChangeDetector -a ", ""), // WARNING SETTING of the affected position. new 07/07/2018
-				            					this.driftOption.getValueAsCLIString().replace("EvolvingADWINChangeDetector -a ", ""), // DRIFT SETTING of the affected position. new 07/07/2018
-				            					String.valueOf(this.createdOn), // new, affected_classifier_was_created_on
-				            					String.valueOf(this.evaluator.getFractionIncorrectlyClassified()), 
-				            					String.valueOf(this.useRecurringLearner ? ConceptHistory.modelsOnWarning.size() : "N/A"), // #models;
-				            					String.valueOf(this.useRecurringLearner ? ConceptHistory.getNumberOfActiveWarnings() : "N/A"), // #active_warnings
-				            					String.valueOf(this.useRecurringLearner ? ConceptHistory.modelsOnWarning : "N/A"), // models_on_warning
-				            					"N/A",
-				            					String.valueOf(ConceptHistory.historyList.get(getMinKey(ranking)).ensembleIndex),
-				            					String.valueOf(ConceptHistory.historyList.get(getMinKey(ranking)).createdOn)) // new, drift_to_classifier_created_on
-		            				);
-		            		eventsLogFile.flush();
+		            		logEvent(String.valueOf(this.lastDriftOn), "RECURRING DRIFT", String.valueOf(this.indexOriginal), 
+	            					String.valueOf(this.evaluator.getPerformanceMeasurements()[1].getValue()), 
+	            					this.warningOption.getValueAsCLIString().replace("EvolvingADWINChangeDetector -a ", ""), 
+	            					this.driftOption.getValueAsCLIString().replace("EvolvingADWINChangeDetector -a ", ""), 
+	            					String.valueOf(this.createdOn), String.valueOf(this.evaluator.getFractionIncorrectlyClassified()), 
+	            					String.valueOf(this.useRecurringLearner ? ConceptHistory.modelsOnWarning.size() : "N/A"),
+	            					String.valueOf(this.useRecurringLearner ? ConceptHistory.getNumberOfActiveWarnings() : "N/A"), 
+	            					String.valueOf(this.useRecurringLearner ? ConceptHistory.modelsOnWarning : "N/A"), "N/A",
+	            					String.valueOf(ConceptHistory.historyList.get(getMinKey(ranking)).ensembleIndex),
+	            					String.valueOf(ConceptHistory.historyList.get(getMinKey(ranking)).createdOn));
 			    			
 			    			//1279,1,WARNING-START,0.74,{F,T,F;F;F;F},...
 		    			}
@@ -918,24 +881,15 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
 	    	            // System.out.println("DRIFT RESET IN MODEL #"+this.indexOriginal+" TO NEW BKG MODEL #"+this.bkgLearner.indexOriginal); 
 		    			if (eventsLogFile != null && logLevel >= 0 ) {
 		            		//# instance, event, affected_position, affected_classifier_created_on, last-error, #models;#active_warnings; models_on_warning, applicable_concepts_from_here, recurring_drift_to_history_id			    			
-		            		eventsLogFile.println(
-		            				String.join(";",
-				            					String.valueOf(this.lastDriftOn), 
-				            					"DRIFT TO BKG MODEL", 
-				            					String.valueOf(this.indexOriginal), // new, affected_position
-				            					String.valueOf(this.evaluator.getPerformanceMeasurements()[1].getValue()), // VOTING_WEIGHT of the affected position (this is as represented in getVotesForInstance for the global ensemble), // new 07/07/2018
-				            					this.warningOption.getValueAsCLIString().replace("EvolvingADWINChangeDetector -a ", ""), // WARNING SETTING of the affected position. new 07/07/2018
-				            					this.driftOption.getValueAsCLIString().replace("EvolvingADWINChangeDetector -a ", ""), // DRIFT SETTING of the affected position. new 07/07/2018
-				            					String.valueOf(this.createdOn), // new, affected_classifier_created_on
-				            					String.valueOf(this.evaluator.getFractionIncorrectlyClassified()), 
-				            					String.valueOf(this.useRecurringLearner ? ConceptHistory.modelsOnWarning.size() : "N/A"), // #models;
-				            					String.valueOf(this.useRecurringLearner ? ConceptHistory.getNumberOfActiveWarnings() : "N/A"), // #active_warnings
-				            					String.valueOf(this.useRecurringLearner ? ConceptHistory.modelsOnWarning : "N/A"), // models_on_warning
-				            					"N/A",
-				            					"N/A",
-				            					"N/A") // new, drift_to_classifier_created_on
-		            				);
-		            		eventsLogFile.flush();
+		    				logEvent(String.valueOf(this.lastDriftOn), "DRIFT TO BKG MODEL", String.valueOf(this.indexOriginal), 
+	            					String.valueOf(this.evaluator.getPerformanceMeasurements()[1].getValue()), 
+	            					this.warningOption.getValueAsCLIString().replace("EvolvingADWINChangeDetector -a ", ""), 
+	            					this.driftOption.getValueAsCLIString().replace("EvolvingADWINChangeDetector -a ", ""), 
+	            					String.valueOf(this.createdOn), String.valueOf(this.evaluator.getFractionIncorrectlyClassified()), 
+	            					String.valueOf(this.useRecurringLearner ? ConceptHistory.modelsOnWarning.size() : "N/A"), 
+	            					String.valueOf(this.useRecurringLearner ? ConceptHistory.getNumberOfActiveWarnings() : "N/A"), 
+	            					String.valueOf(this.useRecurringLearner ? ConceptHistory.modelsOnWarning : "N/A"), 
+	            					"N/A", "N/A", "N/A" );
 				        //1279,1,WARNING-START,0.74,{F,T,F;F;F;F},...
 		    			}
 		    		}
@@ -944,24 +898,15 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
     	            // System.out.println("DRIFT RESET IN POSITION #"+this.indexOriginal+" TO NEW BKG MODEL"); 
     				if (eventsLogFile != null && logLevel >= 0 ) {
                 		//# instance, event, affected_position, affected_classifier_id last-error, #models;#active_warnings; models_on_warning, applicable_concepts_from_here, recurring_drift_to_history_id	    				
-	            		eventsLogFile.println(
-	            				String.join(";",
-			            					String.valueOf(this.lastDriftOn), 
-			            					"DRIFT TO BKG MODEL", 
-			            					String.valueOf(this.indexOriginal), // new, affected_position
-			            					String.valueOf(this.evaluator.getPerformanceMeasurements()[1].getValue()), // VOTING_WEIGHT of the affected position (this is as represented in getVotesForInstance for the global ensemble), // new 07/07/2018
-			            					this.warningOption.getValueAsCLIString().replace("EvolvingADWINChangeDetector -a ", ""), // WARNING SETTING of the affected position. new 07/07/2018
-			            					this.driftOption.getValueAsCLIString().replace("EvolvingADWINChangeDetector -a ", ""), // DRIFT SETTING of the affected position. new 07/07/2018
-			            					String.valueOf(this.createdOn), // new, affected_classifier_created_on
-			            					String.valueOf(this.evaluator.getFractionIncorrectlyClassified()), 
-			            					String.valueOf(this.useRecurringLearner ? ConceptHistory.modelsOnWarning.size() : "N/A"), // #models;
-			            					String.valueOf(this.useRecurringLearner ? ConceptHistory.getNumberOfActiveWarnings() : "N/A"), // #active_warnings
-			            					String.valueOf(this.useRecurringLearner ? ConceptHistory.modelsOnWarning : "N/A"), // models_on_warning
-			            					"N/A",
-			            					"N/A",
-			            					"N/A")
-	            				);
-	            		eventsLogFile.flush();
+	            		logEvent(String.valueOf(this.lastDriftOn), "DRIFT TO BKG MODEL", String.valueOf(this.indexOriginal), 
+            					String.valueOf(this.evaluator.getPerformanceMeasurements()[1].getValue()), 
+            					this.warningOption.getValueAsCLIString().replace("EvolvingADWINChangeDetector -a ", ""), 
+            					this.driftOption.getValueAsCLIString().replace("EvolvingADWINChangeDetector -a ", ""),
+            					String.valueOf(this.createdOn), String.valueOf(this.evaluator.getFractionIncorrectlyClassified()), 
+            					String.valueOf(this.useRecurringLearner ? ConceptHistory.modelsOnWarning.size() : "N/A"), 
+            					String.valueOf(this.useRecurringLearner ? ConceptHistory.getNumberOfActiveWarnings() : "N/A"), 
+            					String.valueOf(this.useRecurringLearner ? ConceptHistory.modelsOnWarning : "N/A"), 
+            					"N/A", "N/A", "N/A");
     				}
     			}
         }
@@ -1212,6 +1157,37 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
 		}
 		
     }
+
+    /**
+     * Method to register events such as Warning and Drifts in the event log file.
+     * */
+	public void logEvent(String instanceNumber, String event, String affectedPosition, String votingWeigth, 
+					String warningSetting, String driftSetting,String createdOn, String lastError, 
+					String numberOfModels, String numberOfActiveWarnings, String modelsOnWarning, 
+					String listOfApplicableConcepts,String recurringDriftToModelID, String driftToModelCreatedOn) {
+		
+		// Log processed instances, warnings and drifts in file of events
+		//# instance, event, affected_position, affected_classifier_id last-error, #models;#active_warnings; models_on_warning, applicable_concepts_from_here, recurring_drift_to_history_id, drift_to_classifier_created_on
+		eventsLogFile.println(
+				String.join(";",
+						instanceNumber, 
+        					event, 
+        					affectedPosition,
+        					votingWeigth, // of the affected position (this is as represented in getVotesForInstance for the global ensemble), // new 07/07/2018
+        					warningSetting, // WARNING SETTING of the affected position. new 07/07/2018
+        					driftSetting, // DRIFT SETTING of the affected position. new 07/07/2018
+        					createdOn, // new, affected_classifier_was_created_on
+        					lastError, 
+        					numberOfModels,
+        					numberOfActiveWarnings, // #active_warnings
+        					modelsOnWarning, 
+        					listOfApplicableConcepts, // applicable_concepts_from_here
+        					recurringDriftToModelID, // recurring_drift_to_history_id
+        					driftToModelCreatedOn)
+				);
+		eventsLogFile.flush();
+		
+	}
     
     
 }
