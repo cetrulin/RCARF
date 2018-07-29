@@ -396,6 +396,7 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
 		            					"recurring_drift_to_history_id",
 		            					"recurring_drift_to_classifier_created_on") // new
             				);
+            			eventsLogFile.flush();
 	            //1279,1,WARNING-START,0.74,{F,T,F;F;F;F},...
         		}
         	} catch (FileNotFoundException e) {
@@ -677,6 +678,31 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
           		   // 1 Compare DT results using Window method and pick the best one between concept history and bkg model.
           		   // It returns the best model in the object of the bkgLearner
                      if (this.useRecurringLearner)  selectNewActiveModel();
+                     else {
+                    	 	// Print bkg drift for ARF
+	 		    			if (eventsLogFile != null && logLevel >= 0 ) {
+			            		//# instance, event, affected_position, affected_classifier_created_on, last-error, #models;#active_warnings; models_on_warning, applicable_concepts_from_here, recurring_drift_to_history_id			    			
+			            		eventsLogFile.println(
+			            				String.join(";",
+					            					String.valueOf(this.lastDriftOn), 
+					            					"DRIFT TO BKG MODEL", 
+					            					String.valueOf(this.indexOriginal), // new, affected_position
+					            					String.valueOf(this.evaluator.getPerformanceMeasurements()[1].getValue()), // VOTING_WEIGHT of the affected position (this is as represented in getVotesForInstance for the global ensemble), // new 07/07/2018
+					            					this.warningOption.getValueAsCLIString().replace("EvolvingADWINChangeDetector -a ", ""), // WARNING SETTING of the affected position. new 07/07/2018
+					            					this.driftOption.getValueAsCLIString().replace("EvolvingADWINChangeDetector -a ", ""), // DRIFT SETTING of the affected position. new 07/07/2018
+					            					String.valueOf(this.createdOn), // new, affected_classifier_created_on
+					            					String.valueOf(this.evaluator.getFractionIncorrectlyClassified()), 
+					            					String.valueOf(this.useRecurringLearner ? ConceptHistory.modelsOnWarning.size() : "N/A"), // #models;
+					            					String.valueOf(this.useRecurringLearner ? ConceptHistory.getNumberOfActiveWarnings() : "N/A"), // #active_warnings
+					            					String.valueOf(this.useRecurringLearner ? ConceptHistory.modelsOnWarning : "N/A"), // models_on_warning
+					            					"N/A",
+					            					"N/A",
+					            					"N/A") // new, drift_to_classifier_created_on
+			            				);
+			            		eventsLogFile.flush();
+					        //1279,1,WARNING-START,0.74,{F,T,F;F;F;F},...
+			    			}
+                     }
                     
 	        		   // 2 Transition to new model
                     this.reset();
@@ -700,6 +726,7 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
 		            					"N/A",
 	            						"N/A") // new, drift_to_classifier_created_on
             				);
+            		eventsLogFile.flush();
                 //1279,1,WARNING-START,0.74,{F,T,F;F;F;F},N/A
             }
         } 
@@ -761,6 +788,9 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
 			        		}
 			        	}
 	            } 
+
+    	        } 
+    	        
 	            // System.out.println();
 	            // System.out.println("-------------------------------------------------");
 	            // System.out.println("WARNING ON IN MODEL #"+this.indexOriginal+". Warning flag status (activeModelPos, Flag): "+ConceptHistory.modelsOnWarning);
@@ -768,6 +798,7 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
 	            // System.out.println("-------------------------------------------------");
 	            // System.out.println();
         		//# instance, event, affected_position, affected_classifier_id last-error, #models;#active_warnings; models_on_warning, applicable_concepts_from_here, recurring_drift_to_history_id, drift_to_classifier_created_on
+	            
 	            if (eventsLogFile != null && logLevel >= 1 ) {
 	            		// Log warnings in file of events
 	            		eventsLogFile.println(
@@ -787,15 +818,9 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
 			            					"N/A", // recurring_drift_to_history_id
 			            					"N/A") // new, drift_to_classifier_created_on
 	            				);
+	            		eventsLogFile.flush();
 		            //1279,1,WARNING-START,0.74,{F,T,F;F;F;F},...
 	            }
-    	        } else {
-    	            // System.out.println();
-    	            // System.out.println("-------------------------------------------------");
-    	            // System.out.println("WARNING ON IN MODEL #"+this.indexOriginal);
-    	            // System.out.println("-------------------------------------------------");
-    	            // System.out.println();
-    	        }
 
             // 2 Create background Model
             createBkgModel();
@@ -879,6 +904,7 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
 				            					String.valueOf(ConceptHistory.historyList.get(getMinKey(ranking)).ensembleIndex),
 				            					String.valueOf(ConceptHistory.historyList.get(getMinKey(ranking)).createdOn)) // new, drift_to_classifier_created_on
 		            				);
+		            		eventsLogFile.flush();
 			    			
 			    			//1279,1,WARNING-START,0.74,{F,T,F;F;F;F},...
 		    			}
@@ -909,6 +935,7 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
 				            					"N/A",
 				            					"N/A") // new, drift_to_classifier_created_on
 		            				);
+		            		eventsLogFile.flush();
 				        //1279,1,WARNING-START,0.74,{F,T,F;F;F;F},...
 		    			}
 		    		}
@@ -934,6 +961,7 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
 			            					"N/A",
 			            					"N/A")
 	            				);
+	            		eventsLogFile.flush();
     				}
     			}
         }
@@ -996,6 +1024,7 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
         public Integer call() throws Exception {
             run();
             return 0;
+            
         }
     }
     
