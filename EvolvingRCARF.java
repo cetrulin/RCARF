@@ -145,31 +145,31 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
     // P1 = Moderate
     double p1_drift = 0.00001;
     double p1_warning = 0.0001;
-    double [] p1 = {p1_drift,p1_warning};
+    double [] p1 = {p1_drift, p1_warning};
     
     // P2
     double p2_drift = 0.0001;
     double p2_warning = 0.001;
-    double [] p2 = {p2_drift,p2_warning};
+    double [] p2 = {p2_drift, p2_warning};
     
     // P3 = Fast
     double p3_drift = 0.001;
     double p3_warning = 0.01;
-    double [] p3 = {p3_drift,p3_warning};
+    double [] p3 = {p3_drift, p3_warning};
     
     // P4
     double p4_drift = 0.01;
     double p4_warning = 0.1;
-    double [] p4 = {p4_drift,p4_warning};
+    double [] p4 = {p4_drift, p4_warning};
     
     // P5 = Ultra
     double p5_drift = 0.1;
     double p5_warning = 0.2;
-    double [] p5 = {p5_drift,p5_warning};
+    double [] p5 = {p5_drift, p5_warning};
     
     // p_full_set
     double [][] p_deltas = {p1, p2, p3, p4, p5};
-    int p_allocation = this.ensembleSizeOption.getValue() / p_deltas.length; // TO-DO: this idea doesn't cover well scenarios where the size is not a multiple.
+    // int p_allocation = this.ensembleSizeOption.getValue() / p_deltas.length; // TO-DO: this idea doesn't cover well scenarios where the size is not a multiple.
         
     /*********************************/
    
@@ -268,7 +268,7 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
         if (!disableRecurringDriftDetectionOption.isSet() && ConceptHistory.historyList != null && ConceptHistory.modelsOnWarning.containsValue(true) && ConceptHistory.historyList.size() > 0) {
 	        	for (Concept oldModel : ConceptHistory.historyList.values()) { // TODO: test this
 	            DoubleVector oldModelVote = new DoubleVector(oldModel.ConceptLearner.getVotesForInstance(instance)); // TODO. this
-	            // // System.out.println("Im classifier number #"+oldModel.Concept.classifier.calcByteSize()+" created on: "+oldModel.Concept.createdOn+"  and last error was:  "+oldModel.Concept.lastError);
+	            // // System.out.println("I'm classifier number #"+oldModel.Concept.classifier.calcByteSize()+" created on: "+oldModel.Concept.createdOn+"  and last error was:  "+oldModel.Concept.lastError);
         			if (oldModel.ConceptLearner.internalWindowEvaluator != null && 
         					oldModel.ConceptLearner.internalWindowEvaluator.getAmountOfApplicableModels() > 0) { // When the concept is added the first time, it doesn't have applicable models. They are not inserted until the first warning. 
         				// So the Concept History only runs over warning windows
@@ -425,17 +425,24 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
         Classifier learner = (Classifier) getPreparedClassOption(this.baseLearnerOption);
         learner.resetLearning();
         
+        int p_allocation = this.ensembleSizeOption.getValue() / p_deltas.length;
+        //System.out.println("p_allocation = ensemble_size / p_deltas.length");
+        //System.out.println(p_allocation + " = " + this.ensembleSizeOption.getValue() + " / " +p_deltas.length);
+        //System.out.println("p_config = ((int) Math.floor((i+1)/(p_allocation+1)))");
+        
         for(int i = 0 ; i < ensembleSize ; ++i) {	
     	    		// asuarez TO-DO: bagging should be in this code and not in the code of the trees for ARF. this is only a provisional fix.
         		if(learner.getPurposeString().contains("Adaptive Random Forest Hoeffding Tree for data streams.")) {
         			//System.out.println("The current base learner supports feature subspace. Applying it to classifier: #"+(i+1));
         			((ARFHoeffdingTree) learner).subspaceSizeOption.setValue(this.subspaceSize);
         		}
-        		
+        		        		
         		// What ADWIN intervals to use depending on ensemble position. 
         		// asuarez: TO-DO. Check if some p's are not ever used again after being sent to the Concept History
-        		int p_config = ((int) Math.floor((i)/(p_allocation+1))); // + 1;
-
+        		int p_config = ((int) Math.floor((i+1)/(p_allocation))); 
+        		if ((i+1) % p_allocation == 0) p_config = ((int) Math.floor((i+1)/(p_allocation))) -1; // Making sure that the distribution is equally distributed when the ensemble size is a multiple of the amount of different configs
+        		// System.out.println("Tree #"+(i+1)+" - config for ensemble size of "+this.ensembleSizeOption.getValue()+", is "+p_config);
+        		
         		// Set ADWIN interval parameters depending on the ensemble's position
         	    ClassOption p_driftDetectionMethodOption = new ClassOption("driftDetectionMethod", 'x',
         	            "Change detector for drifts and its parameters", EvolvingChangeDetector.class, "EvolvingADWINChangeDetector -a " + p_deltas[p_config][0]);
@@ -788,7 +795,7 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
 		    		// 2 Compare this against the background model (in an edge case where the bkgmodel is still NULL, we ignore the comparisons)
 		    		if(this.bkgLearner != null && (Collections.min(ranking.values())<=((DynamicWindowClassificationPerformanceEvaluator) 
 							this.bkgLearner.internalWindowEvaluator).getFractionIncorrectlyClassified(this.bkgLearner.indexOriginal))){
-		    			// Log recurring drift
+		    			// Register recurring drift
 		    			if (eventsLogFile != null && logLevel >= 0 ) logEvent(getRecurringDriftEvent(ranking));	
 		    			
 		    			// Extracts best recurring learner form concept history. It no longer exists in the concept history
@@ -798,10 +805,12 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
 		    			//		Collections.min(ranking.values())+" is not better than the bbk learner one: "+
 		    			//		((DynamicWindowClassificationPerformanceEvaluator) 
 		    			//				this.bkgLearner.internalWindowEvaluator).getFractionIncorrectlyClassified(this.bkgLearner.indexOriginal));
+		    			// Register background drift
 		    			if (eventsLogFile != null && logLevel >= 0 ) logEvent(getBkgDriftEvent());	
 		    		}
     			} else {
     				// System.out.println("0 applicable concepts for model  #"+this.indexOriginal+" in concept history.");
+    				// Register background drift
 	    			if (eventsLogFile != null && logLevel >= 0 ) logEvent(getBkgDriftEvent());	
     			}
         }
