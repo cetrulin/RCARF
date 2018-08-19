@@ -39,7 +39,12 @@ public class EvolvingADWINChangeDetector extends AbstractEvolvingChangeDetector 
 
     public FloatOption deltaAdwinOption = new FloatOption("deltaAdwin", 'a',
             "Delta of Adwin change detection", 0.002, 0.0, 1.0);
-
+    
+    public EvolvingADWINChangeDetector (double deltaAdwin) {
+    		deltaAdwinOption.setValue(deltaAdwin);
+    		// resetLearning(); // may not be needed here as it's called in 'input'
+    }
+    
     @Override
     public void input(double inputValue) {
         if (this.adwin == null) {
@@ -55,7 +60,7 @@ public class EvolvingADWINChangeDetector extends AbstractEvolvingChangeDetector 
         this.delay = 0.0;
         this.estimation = adwin.getEstimation();
     }
-
+    
     @Override
     public void resetLearning() {
         adwin = new EvolvingADWIN((double) this.deltaAdwinOption.getValue());

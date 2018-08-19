@@ -444,16 +444,19 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
         		int p_config = ((int) Math.floor((i+1)/(p_allocation))); 
         		if ((i+1) % p_allocation == 0) p_config = ((int) Math.floor((i+1)/(p_allocation))) -1; // Making sure that the distribution is equally distributed when the ensemble size is a multiple of the amount of different configs
         		// System.out.println("Tree #"+(i+1)+" - config for ensemble size of "+this.ensembleSizeOption.getValue()+", is "+p_config);
-        		
-        		// Set ADWIN interval parameters depending on the ensemble's position
+        		/*
         	    ClassOption p_driftDetectionMethodOption = new ClassOption("driftDetectionMethod", 'x',
-        	            "Change detector for drifts and its parameters", EvolvingChangeDetector.class, "EvolvingADWINChangeDetector -a " + p_deltas[p_config][0]);
+        	           "Change detector for drifts and its parameters", EvolvingChangeDetector.class, "EvolvingADWINChangeDetector -a " + p_deltas[p_config][0]);
         	    ClassOption p_warningDetectionMethodOption = new ClassOption("warningDetectionMethod", 'p',
         	            "Change detector for warnings (start training bkg learner)", EvolvingChangeDetector.class, "EvolvingADWINChangeDetector -a " + p_deltas[p_config][1]);
-        		
-        	    // TODO. Andres 19 Agosto. ¿Podria ser esta una manera alternativa y mas limpia de declararlo y pasar los parametros una linea despues?
-        	    //EvolvingADWINChangeDetector a = new EvolvingADWINChangeDetector();
-        	    
+        	    */
+        		// Andres 19 Agosto. ¿Podria ser esta una manera alternativa y mas limpia de declararlo y pasar los parametros una linea despues?        	    
+        		// Set ADWIN interval parameters depending on the ensemble's position
+        		/*EvolvingADWINChangeDetector p_driftDetectionMethod;
+        	    EvolvingADWINChangeDetector p_warningDetectionMethod;
+        	    p_driftDetectionMethod.deltaAdwinOption.setValue(p_deltas[p_config][0]);
+        	    p_warningDetectionMethod.deltaAdwinOption.setValue(p_deltas[p_config][1]);*/
+        	            	    
             this.ensemble[i] = new RCARFBaseLearner(
                 i, 
                 (Classifier) learner.copy(), 
@@ -461,8 +464,8 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
                 this.instancesSeen, 
                 ! this.disableBackgroundLearnerOption.isSet(),
                 ! this.disableDriftDetectionOption.isSet(), 
-                (ClassOption) p_driftDetectionMethodOption.copy(),
-                (ClassOption) p_warningDetectionMethodOption.copy(),
+                p_deltas[p_config][0],
+                p_deltas[p_config][1],
                 false,
                 ! this.disableRecurringDriftDetectionOption.isSet(),
                 false, // @suarezcetrulo : first model is not old. An old model (retrieved from the concept history).
@@ -489,8 +492,10 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
         public boolean isOldLearner; // only for reference
         
         // The drift and warning object parameters. 
-        protected ClassOption driftOption;
-        protected ClassOption warningOption;
+        protected double driftSetting;
+        protected double warningSetting;
+        //protected ClassOption driftOption;
+        //protected ClassOption warningOption;
         
         // Drift and warning detection
         protected EvolvingChangeDetector driftDetectionMethod;
@@ -519,7 +524,7 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
 
         
         private void init(int indexOriginal, Classifier classifier, BasicClassificationPerformanceEvaluator evaluatorInstantiated, 
-            long instancesSeen, boolean useBkgLearner, boolean useDriftDetector, ClassOption driftOption, ClassOption warningOption, boolean isBackgroundLearner, 
+            long instancesSeen, boolean useBkgLearner, boolean useDriftDetector, double driftSetting, double warningSetting, boolean isBackgroundLearner, 
             boolean useRecurringLearner, boolean isOldLearner, Window windowProperties, DynamicWindowClassificationPerformanceEvaluator internalEvaluator,
             PrintWriter eventsLogFile, int logLevel) { // last parameters added by @suarezcetrulo
             this.indexOriginal = indexOriginal;
@@ -538,16 +543,22 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
             this.numberOfDriftsDetected = 0;
             this.numberOfWarningsDetected = 0;
             this.isBackgroundLearner = isBackgroundLearner;
-                        
+                                
+            // Init Drift Detector for Drift detection.  
             if(this.useDriftDetector) {
-                this.driftOption = driftOption;
-                this.driftDetectionMethod = ((EvolvingChangeDetector) getPreparedClassOption(this.driftOption)).copy();
+                //this.driftOption = driftSetting;
+                //this.driftOption = new ClassOption("driftDetectionMethod", 'x', "Change detector for drifts and its parameters", EvolvingChangeDetector.class, "EvolvingADWINChangeDetector -a " + driftSetting);                		
+                //this.driftDetectionMethod = ((EvolvingChangeDetector) getPreparedClassOption(this.driftOption)).copy();
+                this.driftDetectionMethod = (EvolvingChangeDetector) new EvolvingADWINChangeDetector(driftSetting);
+
             }
 
             // Init Drift Detector for Warning detection. 
             if(this.useBkgLearner) {
-                this.warningOption = warningOption;
-                this.warningDetectionMethod = ((EvolvingChangeDetector) getPreparedClassOption(this.warningOption)).copy();
+                //this.warningOption = warningSetting;
+            	    //this.warningOption = new ClassOption("warningDetectionMethod", 'p', "Change detector for warnings (start training bkg learner)", EvolvingChangeDetector.class, "EvolvingADWINChangeDetector -a " + warningSetting);                 	    
+                //this.warningDetectionMethod = ((EvolvingChangeDetector) getPreparedClassOption(this.warningOption)).copy();
+                this.warningDetectionMethod = (EvolvingChangeDetector) new EvolvingADWINChangeDetector(warningSetting);
             }       
             
             if (useRecurringLearner) {
@@ -562,11 +573,11 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
 
         // Last inputs parameters added by @suarezcetrulo
         public RCARFBaseLearner(int indexOriginal, Classifier classifier, BasicClassificationPerformanceEvaluator evaluatorInstantiated, 
-                    long instancesSeen, boolean useBkgLearner, boolean useDriftDetector, ClassOption driftOption, ClassOption warningOption, 
+                    long instancesSeen, boolean useBkgLearner, boolean useDriftDetector, double driftSetting, double warningSetting, 
                     boolean isBackgroundLearner, boolean useRecurringLearner, boolean isOldLearner, 
                     Window windowProperties, DynamicWindowClassificationPerformanceEvaluator bkgInternalEvaluator, PrintWriter eventsLogFile, int logLevel) {
             init(indexOriginal, classifier, evaluatorInstantiated, instancesSeen, useBkgLearner, 
-            		 useDriftDetector, driftOption, warningOption, isBackgroundLearner, useRecurringLearner,  isOldLearner, 
+            		 useDriftDetector, driftSetting, warningSetting, isBackgroundLearner, useRecurringLearner,  isOldLearner, 
             		 windowProperties,bkgInternalEvaluator, eventsLogFile, logLevel);
         }
 
@@ -609,8 +620,8 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
                    this.internalWindowEvaluator = null; // only a double check, as it should be always null (only used in background + old concept Learners)
                    
                    // 2.4 Inherit warning and drift options (as for Concept History classifiers it may differ from the current one)
-                   this.driftOption = this.bkgLearner.driftOption;
-                   this.warningOption = this.bkgLearner.warningOption;
+                   this.driftSetting = this.bkgLearner.driftSetting;
+                   this.warningSetting = this.bkgLearner.warningSetting;
 
         		   }
 	            // 2.3 New active model is the best retrieved old model / clear background learner
@@ -625,7 +636,8 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
             else { 
                 this.classifier.resetLearning();
                 this.createdOn = instancesSeen;
-                this.driftDetectionMethod = ((EvolvingChangeDetector) getPreparedClassOption(this.driftOption)).copy();
+                // this.driftDetectionMethod = ((EvolvingChangeDetector) getPreparedClassOption(this.driftOption)).copy(); // commented out by asuarez at 19-08-2018
+                this.driftDetectionMethod = (EvolvingChangeDetector) new EvolvingADWINChangeDetector(this.driftSetting);
             }
             this.evaluator.reset();
         }
@@ -671,6 +683,7 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
                      if (this.useRecurringLearner)  selectNewActiveModel();
                      else if (eventsLogFile != null && logLevel >= 1 ) logEvent(getBkgDriftEvent()); // Print bkg drifts in log also for ARF
                     
+                     
 	        		   // 2 Transition to new model
                     this.reset();
                 } 
@@ -690,7 +703,7 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
     			// It doesn't get initialized till once in the Concept History and the first warning arises. See it in startWarningWindow
     			RCARFBaseLearner tmpConcept = new RCARFBaseLearner(this.indexOriginal, 
     					this.classifier.copy(), (BasicClassificationPerformanceEvaluator) this.evaluator.copy(), 
-    					this.createdOn, this.useBkgLearner, this.useDriftDetector, this.driftOption, this.warningOption, 
+    					this.createdOn, this.useBkgLearner, this.useDriftDetector, this.driftSetting, this.warningSetting, 
     					true, this.useRecurringLearner, true, this.windowProperties.copy(), null, eventsLogFile, logLevel);
 
     			this.tmpCopyOfModel = new Concept(tmpConcept, 
@@ -743,7 +756,8 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
 
             // Update the warning detection object for the current object 
             // (this effectively resets changes made to the object while it was still a bkg learner). 
-            this.warningDetectionMethod = ((EvolvingChangeDetector) getPreparedClassOption(this.warningOption)).copy();
+            // this.warningDetectionMethod = ((EvolvingChangeDetector) getPreparedClassOption(this.warningOption)).copy(); // commented out by asuarez at 19-08-2018
+            this.warningDetectionMethod = (EvolvingChangeDetector) new EvolvingADWINChangeDetector(warningSetting);
         }
         
         
@@ -775,7 +789,7 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
             
             // 4 Create a new bkgLearner object
             this.bkgLearner = new RCARFBaseLearner(indexOriginal, bkgClassifier, bkgEvaluator, this.lastWarningOn, 
-            		this.useBkgLearner, this.useDriftDetector, this.driftOption, this.warningOption, true, this.useRecurringLearner, false, 
+            		this.useBkgLearner, this.useDriftDetector, this.driftSetting, this.warningSetting, true, this.useRecurringLearner, false, 
             									   this.windowProperties, bkgInternalWindowEvaluator, eventsLogFile, logLevel); // added last inputs parameter by @suarezcetrulo        	
         }
      
@@ -856,8 +870,8 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
         		String [] eventLog = {
 		        String.valueOf(instancesSeen), "Train example", String.valueOf(this.indexOriginal), 
 				String.valueOf(this.evaluator.getPerformanceMeasurements()[1].getValue()), 
-				this.warningOption.getValueAsCLIString().replace("EvolvingADWINChangeDetector -a ", ""), 
-				this.driftOption.getValueAsCLIString().replace("EvolvingADWINChangeDetector -a ", ""), 
+		    		String.valueOf(this.warningSetting), 
+		    		String.valueOf(this.driftSetting), 
 				String.valueOf(this.createdOn), String.valueOf(this.evaluator.getFractionIncorrectlyClassified()), 
 				String.valueOf(this.useRecurringLearner ? ConceptHistory.modelsOnWarning.size() : "N/A"),
 				String.valueOf(this.useRecurringLearner ? ConceptHistory.getNumberOfActiveWarnings() : "N/A"),
@@ -878,8 +892,8 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
         		String [] warningLog = {
     				String.valueOf(this.lastWarningOn), "WARNING-START", // event
     				String.valueOf(this.indexOriginal), String.valueOf(this.evaluator.getPerformanceMeasurements()[1].getValue()), 
-    				this.warningOption.getValueAsCLIString().replace("EvolvingADWINChangeDetector -a ", ""),
-    				this.driftOption.getValueAsCLIString().replace("EvolvingADWINChangeDetector -a ", ""), 
+		    		String.valueOf(this.warningSetting), 
+		    		String.valueOf(this.driftSetting), 
     				String.valueOf(this.createdOn), String.valueOf(this.evaluator.getFractionIncorrectlyClassified()), 
     				String.valueOf(this.useRecurringLearner ? ConceptHistory.modelsOnWarning.size() : "N/A"),
     				String.valueOf(this.useRecurringLearner ? ConceptHistory.getNumberOfActiveWarnings() : "N/A"),
@@ -896,8 +910,8 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
 
 	    		String [] eventLog = {String.valueOf(this.lastDriftOn), "DRIFT TO BKG MODEL", String.valueOf(this.indexOriginal), 
 						String.valueOf(this.evaluator.getPerformanceMeasurements()[1].getValue()), 
-						this.warningOption.getValueAsCLIString().replace("EvolvingADWINChangeDetector -a ", ""), 
-						this.driftOption.getValueAsCLIString().replace("EvolvingADWINChangeDetector -a ", ""),
+				    		String.valueOf(this.warningSetting), 
+				    		String.valueOf(this.driftSetting), 
 						String.valueOf(this.createdOn), String.valueOf(this.evaluator.getFractionIncorrectlyClassified()), 
 						String.valueOf(this.useRecurringLearner ? ConceptHistory.modelsOnWarning.size() : "N/A"), 
 						String.valueOf(this.useRecurringLearner ? ConceptHistory.getNumberOfActiveWarnings() : "N/A"), 
@@ -917,8 +931,8 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
         		String [] eventLog = {
     		        String.valueOf(this.lastDriftOn), "RECURRING DRIFT", String.valueOf(this.indexOriginal), 
 		    		String.valueOf(this.evaluator.getPerformanceMeasurements()[1].getValue()), 
-		    		this.warningOption.getValueAsCLIString().replace("EvolvingADWINChangeDetector -a ", ""), 
-		    		this.driftOption.getValueAsCLIString().replace("EvolvingADWINChangeDetector -a ", ""), 
+		    		String.valueOf(this.warningSetting), 
+		    		String.valueOf(this.driftSetting), 
 		    		String.valueOf(this.createdOn), String.valueOf(this.evaluator.getFractionIncorrectlyClassified()), 
 		    		String.valueOf(this.useRecurringLearner ? ConceptHistory.modelsOnWarning.size() : "N/A"),
 		    		String.valueOf(this.useRecurringLearner ? ConceptHistory.getNumberOfActiveWarnings() : "N/A"), 
