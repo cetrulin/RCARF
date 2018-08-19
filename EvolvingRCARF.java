@@ -543,22 +543,26 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
             this.numberOfDriftsDetected = 0;
             this.numberOfWarningsDetected = 0;
             this.isBackgroundLearner = isBackgroundLearner;
-                                
+            
+            // Debug
+            // // System.out.println("Ensemble pos:"+indexOriginal+"   ||   instances seen: "+instancesSeen+ " ||   ADWIN settings:  ("+driftSetting+" , "+warningSetting+")");
+            
             // Init Drift Detector for Drift detection.  
             if(this.useDriftDetector) {
-                //this.driftOption = driftSetting;
+                //this.driftOption = driftOption;
                 //this.driftOption = new ClassOption("driftDetectionMethod", 'x', "Change detector for drifts and its parameters", EvolvingChangeDetector.class, "EvolvingADWINChangeDetector -a " + driftSetting);                		
                 //this.driftDetectionMethod = ((EvolvingChangeDetector) getPreparedClassOption(this.driftOption)).copy();
-                this.driftDetectionMethod = (EvolvingChangeDetector) new EvolvingADWINChangeDetector(driftSetting);
-
+                this.driftSetting = driftSetting;
+                this.driftDetectionMethod = (EvolvingChangeDetector) new EvolvingADWINChangeDetector(this.driftSetting);
             }
 
             // Init Drift Detector for Warning detection. 
             if(this.useBkgLearner) {
-                //this.warningOption = warningSetting;
+                //this.warningOption = warningOption;
             	    //this.warningOption = new ClassOption("warningDetectionMethod", 'p', "Change detector for warnings (start training bkg learner)", EvolvingChangeDetector.class, "EvolvingADWINChangeDetector -a " + warningSetting);                 	    
                 //this.warningDetectionMethod = ((EvolvingChangeDetector) getPreparedClassOption(this.warningOption)).copy();
-                this.warningDetectionMethod = (EvolvingChangeDetector) new EvolvingADWINChangeDetector(warningSetting);
+            		this.warningSetting = warningSetting;
+            		this.warningDetectionMethod = (EvolvingChangeDetector) new EvolvingADWINChangeDetector(this.warningSetting);
             }       
             
             if (useRecurringLearner) {
@@ -757,7 +761,7 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
             // Update the warning detection object for the current object 
             // (this effectively resets changes made to the object while it was still a bkg learner). 
             // this.warningDetectionMethod = ((EvolvingChangeDetector) getPreparedClassOption(this.warningOption)).copy(); // commented out by asuarez at 19-08-2018
-            this.warningDetectionMethod = (EvolvingChangeDetector) new EvolvingADWINChangeDetector(warningSetting);
+            this.warningDetectionMethod = (EvolvingChangeDetector) new EvolvingADWINChangeDetector(this.warningSetting);
         }
         
         
@@ -785,6 +789,7 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
                 		this.indexOriginal, "created for BKG classifier in ensembleIndex #"+this.indexOriginal);  
                 bkgInternalWindowEvaluator.reset();
             }
+            // // System.out.println("Propagating settings: "+this.driftSetting+"  "+this.warningSetting);
             // // System.out.println("------------------------------");
             
             // 4 Create a new bkgLearner object
