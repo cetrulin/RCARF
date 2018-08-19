@@ -788,8 +788,8 @@ public class RCARF extends AbstractClassifier implements MultiClassClassifier {
         		String [] eventLog = {
 		        String.valueOf(instancesSeen), "Train example", String.valueOf(this.indexOriginal), 
 				String.valueOf(this.evaluator.getPerformanceMeasurements()[1].getValue()), 
-				this.warningOption.getValueAsCLIString().replace("EvolvingADWINChangeDetector -a ", ""), 
-				this.driftOption.getValueAsCLIString().replace("EvolvingADWINChangeDetector -a ", ""), 
+				this.warningOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""), 
+				this.driftOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""), 
 				String.valueOf(this.createdOn), String.valueOf(this.evaluator.getFractionIncorrectlyClassified()), 
 				String.valueOf(this.useRecurringLearner ? ConceptHistory.modelsOnWarning.size() : "N/A"),
 				String.valueOf(this.useRecurringLearner ? ConceptHistory.getNumberOfActiveWarnings() : "N/A"),
