@@ -53,6 +53,8 @@ import moa.evaluation.DynamicWindowClassificationPerformanceEvaluator;
 
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+
+import moa.classifiers.core.driftdetection.EvolvingADWINChangeDetector;
 import moa.classifiers.core.driftdetection.EvolvingChangeDetector;
 
 
@@ -128,11 +130,11 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
     /*********************************/
     // These two won't be really used in the next test rounds due to the config almost tree-specific
     
-    public ClassOption driftDetectionMethodOption = new ClassOption("driftDetectionMethod", 'x',
-        "Change detector for drifts and its parameters", EvolvingChangeDetector.class, "EvolvingADWINChangeDetector -a 1.0E-5");
+    // public ClassOption driftDetectionMethodOption = new ClassOption("driftDetectionMethod", 'x',
+    //    "Change detector for drifts and its parameters", EvolvingChangeDetector.class, "EvolvingADWINChangeDetector -a 1.0E-5");
 
-    public ClassOption warningDetectionMethodOption = new ClassOption("warningDetectionMethod", 'p',
-        "Change detector for warnings (start training bkg learner)", EvolvingChangeDetector.class, "EvolvingADWINChangeDetector -a 1.0E-4");
+    // public ClassOption warningDetectionMethodOption = new ClassOption("warningDetectionMethod", 'p',
+    //    "Change detector for warnings (start training bkg learner)", EvolvingChangeDetector.class, "EvolvingADWINChangeDetector -a 1.0E-4");
     
     /*********************************
 	 *    P1: delta_drift=0.00001, delta_warning = 0.0001 (moderate)
@@ -449,6 +451,9 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
         	    ClassOption p_warningDetectionMethodOption = new ClassOption("warningDetectionMethod", 'p',
         	            "Change detector for warnings (start training bkg learner)", EvolvingChangeDetector.class, "EvolvingADWINChangeDetector -a " + p_deltas[p_config][1]);
         		
+        	    // TODO. Andres 19 Agosto. ¿Podria ser esta una manera alternativa y mas limpia de declararlo y pasar los parametros una linea despues?
+        	    //EvolvingADWINChangeDetector a = new EvolvingADWINChangeDetector();
+        	    
             this.ensemble[i] = new RCARFBaseLearner(
                 i, 
                 (Classifier) learner.copy(), 
@@ -456,8 +461,8 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
                 this.instancesSeen, 
                 ! this.disableBackgroundLearnerOption.isSet(),
                 ! this.disableDriftDetectionOption.isSet(), 
-                p_driftDetectionMethodOption,
-                p_warningDetectionMethodOption,
+                (ClassOption) p_driftDetectionMethodOption.copy(),
+                (ClassOption) p_warningDetectionMethodOption.copy(),
                 false,
                 ! this.disableRecurringDriftDetectionOption.isSet(),
                 false, // @suarezcetrulo : first model is not old. An old model (retrieved from the concept history).
@@ -729,7 +734,6 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
 			        		}
 			        	}
 	            } 
-
     	        } 
     	        	// Log warning     
 	        if (eventsLogFile != null && logLevel >= 1 ) logEvent(getWarningEvent());
