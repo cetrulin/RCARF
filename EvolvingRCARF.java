@@ -54,6 +54,8 @@ import moa.evaluation.DynamicWindowClassificationPerformanceEvaluator;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+import javax.sound.midi.Synthesizer;
+
 import moa.classifiers.core.driftdetection.EvolvingADWINChangeDetector;
 import moa.classifiers.core.driftdetection.EvolvingChangeDetector;
 
@@ -170,7 +172,15 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
     double [] p5 = {p5_drift, p5_warning};
     
     // p_full_set
-    double [][] p_deltas = {p1, p2, p3, p4, p5};
+    //double [][] p_deltas = {p1, p2, p3, p4, p5};
+    
+    //In case of repeating configs, do it better in this order below (mixed), as when the ensemblesize is not multiple of p_delta.length,
+    // the algorithm starts picking configs for ADWIN in order (first pos 0, then pos 1, then pos 2, etc.)
+    //double [][] p_deltas = {p1, p3, p1, p3}; 
+
+    // Why should we repeat any config? We are over-complicating this...
+    double [][] p_deltas = {p1, p3}; 
+    
     // int p_allocation = this.ensembleSizeOption.getValue() / p_deltas.length; // TO-DO: this idea doesn't cover well scenarios where the size is not a multiple.
         
     /*********************************/
@@ -427,10 +437,12 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
         Classifier learner = (Classifier) getPreparedClassOption(this.baseLearnerOption);
         learner.resetLearning();
         
-        int p_allocation = this.ensembleSizeOption.getValue() / p_deltas.length;
-        //System.out.println("p_allocation = ensemble_size / p_deltas.length");
-        //System.out.println(p_allocation + " = " + this.ensembleSizeOption.getValue() + " / " +p_deltas.length);
-        //System.out.println("p_config = ((int) Math.floor((i+1)/(p_allocation+1)))");
+        int p_allocation = ensembleSize / p_deltas.length;
+        /*
+        System.out.println("//////////////////////////////////////////////");
+        System.out.println("p_allocation = ensemble_size / p_deltas.length");
+        System.out.println(p_allocation + " = " + this.ensembleSizeOption.getValue() + " / " +p_deltas.length);
+        System.out.println("p_config = ((int) Math.floor((i+1)/(p_allocation+1)))"); */
         
         for(int i = 0 ; i < ensembleSize ; ++i) {	
     	    		// asuarez TO-DO: bagging should be in this code and not in the code of the trees for ARF. this is only a provisional fix.
@@ -444,6 +456,11 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
         		int p_config = ((int) Math.floor((i+1)/(p_allocation))); 
         		if ((i+1) % p_allocation == 0) p_config = ((int) Math.floor((i+1)/(p_allocation))) -1; // Making sure that the distribution is equally distributed when the ensemble size is a multiple of the amount of different configs
         		// System.out.println("Tree #"+(i+1)+" - config for ensemble size of "+this.ensembleSizeOption.getValue()+", is "+p_config);
+        		if(p_config >= p_deltas.length) p_config = i % p_deltas.length;
+        		
+        		//System.out.println("For tree #"+i+": config is: "+p_config);
+        		
+        		
         		/*
         	    ClassOption p_driftDetectionMethodOption = new ClassOption("driftDetectionMethod", 'x',
         	           "Change detector for drifts and its parameters", EvolvingChangeDetector.class, "EvolvingADWINChangeDetector -a " + p_deltas[p_config][0]);
