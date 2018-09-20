@@ -50,6 +50,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import moa.classifiers.trees.ARFHoeffdingTree;
 import moa.evaluation.BasicClassificationPerformanceEvaluator;
 import moa.evaluation.DynamicWindowClassificationPerformanceEvaluator;
+import moa.evaluation.LearningPerformanceEvaluator;
 
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -179,6 +180,11 @@ public class RCARF extends AbstractClassifier implements MultiClassClassifier {
    
     public IntOption logLevelOption = new IntOption("eventsLogFileLevel", 'h', 
             "0 only logs drifts; 1 logs drifts + warnings; 2 logs every data example", 1, 0, 2);
+
+    public ClassOption evaluatorOption = new ClassOption("baseClassifierEvaluator", 'f',
+            "Classification performance evaluation method in each base classifier for voting.",
+            LearningPerformanceEvaluator.class,
+            "BasicClassificationPerformanceEvaluator");
     
 	// ////////////////////////////////////////////////
 	// ////////////////////////////////////////////////
@@ -321,9 +327,9 @@ public class RCARF extends AbstractClassifier implements MultiClassClassifier {
         int ensembleSize = this.ensembleSizeOption.getValue();
         this.ensemble = new RCARFBaseLearner[ensembleSize];
         
-        // TODO: this should be an option with default = BasicClassificationPerformanceEvaluator
-//      BasicClassificationPerformanceEvaluator classificationEvaluator = (BasicClassificationPerformanceEvaluator) getPreparedClassOption(this.evaluatorOption);
-        BasicClassificationPerformanceEvaluator classificationEvaluator = new BasicClassificationPerformanceEvaluator();
+        BasicClassificationPerformanceEvaluator classificationEvaluator = (BasicClassificationPerformanceEvaluator) getPreparedClassOption(this.evaluatorOption);
+        // OLD TODO: this should be an option with default = BasicClassificationPerformanceEvaluator
+        // BasicClassificationPerformanceEvaluator classificationEvaluator = new BasicClassificationPerformanceEvaluator();
         
         this.subspaceSize = this.mFeaturesPerTreeSizeOption.getValue();
   

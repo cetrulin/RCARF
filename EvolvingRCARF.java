@@ -50,6 +50,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import moa.classifiers.trees.ARFHoeffdingTree;
 import moa.evaluation.BasicClassificationPerformanceEvaluator;
 import moa.evaluation.DynamicWindowClassificationPerformanceEvaluator;
+import moa.evaluation.LearningPerformanceEvaluator;
 
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -172,14 +173,8 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
     double [] p5 = {p5_drift, p5_warning};
     
     // p_full_set
-    //double [][] p_deltas = {p1, p2, p3, p4, p5};
-    
-    //In case of repeating configs, do it better in this order below (mixed), as when the ensemblesize is not multiple of p_delta.length,
-    // the algorithm starts picking configs for ADWIN in order (first pos 0, then pos 1, then pos 2, etc.)
-    //double [][] p_deltas = {p1, p3, p1, p3}; 
-
-    // Why should we repeat any config? We are over-complicating this...
-    double [][] p_deltas = {p1, p3}; 
+    double [][] p_deltas = {p1, p2, p3, p4, p5};
+    //double [][] p_deltas = {p1, p3}; 
     
     // int p_allocation = this.ensembleSizeOption.getValue() / p_deltas.length; // TO-DO: this idea doesn't cover well scenarios where the size is not a multiple.
         
@@ -231,6 +226,11 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
    
     public IntOption logLevelOption = new IntOption("eventsLogFileLevel", 'h', 
             "0 only logs drifts; 1 logs drifts + warnings; 2 logs every data example", 1, 0, 2);
+    
+    public ClassOption evaluatorOption = new ClassOption("baseClassifierEvaluator", 'f',
+            "Classification performance evaluation method in each base classifier for voting.",
+            LearningPerformanceEvaluator.class,
+            "BasicClassificationPerformanceEvaluator");
     
 	// ////////////////////////////////////////////////
 	// ////////////////////////////////////////////////
@@ -373,9 +373,9 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
         int ensembleSize = this.ensembleSizeOption.getValue();
         this.ensemble = new RCARFBaseLearner[ensembleSize];
         
-        // TODO: this should be an option with default = BasicClassificationPerformanceEvaluator
-//      BasicClassificationPerformanceEvaluator classificationEvaluator = (BasicClassificationPerformanceEvaluator) getPreparedClassOption(this.evaluatorOption);
-        BasicClassificationPerformanceEvaluator classificationEvaluator = new BasicClassificationPerformanceEvaluator();
+        BasicClassificationPerformanceEvaluator classificationEvaluator = (BasicClassificationPerformanceEvaluator) getPreparedClassOption(this.evaluatorOption);
+        // OLD TODO: this should be an option with default = BasicClassificationPerformanceEvaluator
+        // BasicClassificationPerformanceEvaluator classificationEvaluator = new BasicClassificationPerformanceEvaluator();
         
         this.subspaceSize = this.mFeaturesPerTreeSizeOption.getValue();
   
@@ -926,8 +926,7 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
         		return (new Event(warningLog));
         }
         
-        public Event getBkgDriftEvent() {
-        	
+        public Event getBkgDriftEvent() {        	
             // System.out.println("DRIFT RESET IN MODEL #"+this.indexOriginal+" TO NEW BKG MODEL #"+this.bkgLearner.indexOriginal); 
 
 	    		String [] eventLog = {String.valueOf(this.lastDriftOn), "DRIFT TO BKG MODEL", String.valueOf(this.indexOriginal), 
