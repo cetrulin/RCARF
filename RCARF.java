@@ -55,8 +55,8 @@ import moa.evaluation.LearningPerformanceEvaluator;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import moa.classifiers.core.driftdetection.ChangeDetector;
-import moa.classifiers.meta.EvolvingRCARF.ConceptHistory;
-import moa.classifiers.meta.EvolvingRCARF.Event;
+import moa.classifiers.meta.RCARF.ConceptHistory;
+import moa.classifiers.meta.RCARF.Event;
 
 
 /**
@@ -186,6 +186,10 @@ public class RCARF extends AbstractClassifier implements MultiClassClassifier {
             LearningPerformanceEvaluator.class,
             "BasicClassificationPerformanceEvaluator");
     
+    public IntOption driftDecisionMechanismOption = new IntOption("driftDecisionMechanism", 'k', 
+            "0 does not take into account the performance active base classifier explicitely, at the time of the drift; 1 takes into consideration active classifiers", 
+            0, 0, 2);
+
 	// ////////////////////////////////////////////////
 	// ////////////////////////////////////////////////
     protected static final int FEATURES_M = 0;
@@ -261,7 +265,7 @@ public class RCARF extends AbstractClassifier implements MultiClassClassifier {
             }
                         
             int k = MiscUtils.poisson(this.lambdaOption.getValue(), this.classifierRandom);
-            if (k > 0) {
+            if (k > 0) { // asuarez: this condition makes some trees not to be trained with some instances, improving diversity in the ensemble.
                 if(this.executor != null) {
                     TrainingRunnable trainer = new TrainingRunnable(this.ensemble[i], 
                         instance, k, this.instancesSeen);  // asuarez: k is only an instance weight that increases when the instance is missclassified. this is a bagging strategy by Oza 2005.
@@ -404,6 +408,7 @@ public class RCARF extends AbstractClassifier implements MultiClassClassifier {
                 this.instancesSeen, 
                 ! this.disableBackgroundLearnerOption.isSet(),
                 ! this.disableDriftDetectionOption.isSet(), 
+                driftDecisionMechanismOption.getValue(),
                 driftDetectionMethodOption,
                 warningDetectionMethodOption,
                 false,
@@ -442,6 +447,7 @@ public class RCARF extends AbstractClassifier implements MultiClassClassifier {
         public boolean useBkgLearner;
         public boolean useDriftDetector;
         public boolean useRecurringLearner; // @suarezcetrulo
+        public int driftDecisionMechanism; // @suarezcetrulo
         
         // Bkg learner
         protected RCARFBaseLearner bkgLearner;
@@ -462,7 +468,7 @@ public class RCARF extends AbstractClassifier implements MultiClassClassifier {
 
         
         private void init(int indexOriginal, Classifier classifier, BasicClassificationPerformanceEvaluator evaluatorInstantiated, 
-            long instancesSeen, boolean useBkgLearner, boolean useDriftDetector, ClassOption driftOption, ClassOption warningOption, boolean isBackgroundLearner, 
+            long instancesSeen, boolean useBkgLearner, boolean useDriftDetector, int driftDecisionMechanism, ClassOption driftOption, ClassOption warningOption, boolean isBackgroundLearner, 
             boolean useRecurringLearner, boolean isOldLearner, Window windowProperties, DynamicWindowClassificationPerformanceEvaluator internalEvaluator,
             PrintWriter eventsLogFile, int logLevel) { // last parameters added by @suarezcetrulo
             this.indexOriginal = indexOriginal;
@@ -477,6 +483,7 @@ public class RCARF extends AbstractClassifier implements MultiClassClassifier {
             this.useBkgLearner = useBkgLearner;
             this.useRecurringLearner = useRecurringLearner;
             this.useDriftDetector = useDriftDetector;
+            this.driftDecisionMechanism = driftDecisionMechanism;
             
             this.numberOfDriftsDetected = 0;
             this.numberOfWarningsDetected = 0;
@@ -505,11 +512,11 @@ public class RCARF extends AbstractClassifier implements MultiClassClassifier {
 
         // last inputs parameters added by @suarezcetrulo
         public RCARFBaseLearner(int indexOriginal, Classifier classifier, BasicClassificationPerformanceEvaluator evaluatorInstantiated, 
-                    long instancesSeen, boolean useBkgLearner, boolean useDriftDetector, ClassOption driftOption, ClassOption warningOption, 
+                    long instancesSeen, boolean useBkgLearner, boolean useDriftDetector, int driftDecisionMechanism, ClassOption driftOption, ClassOption warningOption, 
                     boolean isBackgroundLearner, boolean useRecurringLearner, boolean isOldLearner, 
                     Window windowProperties, DynamicWindowClassificationPerformanceEvaluator bkgInternalEvaluator, PrintWriter eventsLogFile, int logLevel) {
             init(indexOriginal, classifier, evaluatorInstantiated, instancesSeen, useBkgLearner, 
-            		 useDriftDetector, driftOption, warningOption, isBackgroundLearner, useRecurringLearner,  isOldLearner, 
+            		 useDriftDetector, driftDecisionMechanism, driftOption, warningOption, isBackgroundLearner, useRecurringLearner,  isOldLearner, 
             		 windowProperties,bkgInternalEvaluator, eventsLogFile, logLevel);
         }
 
@@ -575,6 +582,9 @@ public class RCARF extends AbstractClassifier implements MultiClassClassifier {
             this.classifier.trainOnInstance(weightedInstance);            
             if(this.bkgLearner != null) this.bkgLearner.classifier.trainOnInstance(instance);
             
+            // Set false alarms in case of drift at false as default
+            boolean falseAlarm = false; // Included for cases where driftDecisionMechanism > 0 and recurring drifts are enabled.
+            
             // Should it use a drift detector? Also, is it a backgroundLearner? If so, then do not "incept" another one. 
             if(this.useDriftDetector && !this.isBackgroundLearner) {
                 boolean correctlyClassifies = this.classifier.correctlyClassifies(instance);
@@ -607,11 +617,14 @@ public class RCARF extends AbstractClassifier implements MultiClassClassifier {
                     
           		   // 1 Compare DT results using Window method and pick the best one between concept history and bkg model.
           		   // It returns the best model in the object of the bkgLearner
-                    if (this.useRecurringLearner)  selectNewActiveModel();
+                    if (this.useRecurringLearner) falseAlarm = selectNextActiveModel(); // if there is not another base classifier with lower error than active model (and driftDecisionMechanism > 0), then a false alarm is raised
                     else if (eventsLogFile != null && logLevel >= 1 ) logEvent(getBkgDriftEvent()); // Print bkg drifts in log also for ARF
                                        
-	        		   // 2 Transition to new model
-                    this.reset();
+	        		   // 2 Transition to new model (only if there is no false alarms)
+                    if (!falseAlarm) this.reset();
+                    // asuarez. 25 sept 2018
+                    // IMPORTANT. False alarms avoid drifts, but they do not disable a certain warning on a base classifier.
+                    // In cases of a false alarm, the active classifiers will still have an active warning.
                 } 
             } if (eventsLogFile != null && logLevel >= 2) logEvent(getTrainExampleEvent()); // Register training example in log
         } 
@@ -629,7 +642,7 @@ public class RCARF extends AbstractClassifier implements MultiClassClassifier {
     			// It doesn't get initialized till once in the Concept History and the first warning arises. See it in startWarningWindow
     			RCARFBaseLearner tmpConcept = new RCARFBaseLearner(this.indexOriginal, 
     					this.classifier.copy(), (BasicClassificationPerformanceEvaluator) this.evaluator.copy(), 
-    					this.createdOn, this.useBkgLearner, this.useDriftDetector, this.driftOption, this.warningOption, 
+    					this.createdOn, this.useBkgLearner, this.useDriftDetector, this.driftDecisionMechanism, this.driftOption, this.warningOption, 
     					true, this.useRecurringLearner, true, this.windowProperties.copy(), null, eventsLogFile, logLevel);
 
     			this.tmpCopyOfModel = new Concept(tmpConcept, 
@@ -713,48 +726,72 @@ public class RCARF extends AbstractClassifier implements MultiClassClassifier {
             
             // 4 Create a new bkgLearner object
             this.bkgLearner = new RCARFBaseLearner(indexOriginal, bkgClassifier, bkgEvaluator, this.lastWarningOn, 
-            		this.useBkgLearner, this.useDriftDetector, this.driftOption, this.warningOption, true, this.useRecurringLearner, false, 
+            		this.useBkgLearner, this.useDriftDetector, this.driftDecisionMechanism, this.driftOption, this.warningOption, true, this.useRecurringLearner, false, 
             									   this.windowProperties, bkgInternalWindowEvaluator, eventsLogFile, logLevel); // added last inputs parameter by @suarezcetrulo        	
         }
-     
-        // Rank of concept history windows and make decision against bkg model
-        public void selectNewActiveModel() {
-        		HashMap<Integer, Double> ranking = new HashMap<Integer, Double>();
-        		// 1 - Add old models: get each concept score for current warning model (this.indexOriginal - pos of this model with active warning in ensemble)
-        		// Concept History owns only one learner per historic concept. But each learner saves all model's independent window size and priorEstimation in a HashMap.
-	    		for (Concept auxConcept : ConceptHistory.historyList.values()) 
-	    			// Only take into consideration Concepts sent to the Concept History after the current model raised a warning (see this consideration in reset*) 
-	    			if (auxConcept.ConceptLearner.internalWindowEvaluator != null && 
-	    					auxConcept.ConceptLearner.internalWindowEvaluator.containsIndex(this.indexOriginal))
-		    			ranking.put(auxConcept.getHistoryIndex(), ((DynamicWindowClassificationPerformanceEvaluator) 
-		    					auxConcept.ConceptLearner.internalWindowEvaluator).getFractionIncorrectlyClassified(this.indexOriginal));
-		    		
-	    		// Double check just in case the best concept is no longer in the concept history, or some concepts where created after the current model raised warning.
-	    		// ranking = updateWithExistingConcepts(ranking);
+        
+        /** 
+         *  This method ranks all applicable base classifiers in the Concept History (CH)
+         *  It also selects the next model to be active, or it raises a false alarm if the drift should be reconsidered.
+         * 
+		 *  -----------------------------------------------------------------------------------------------------------------
+         *  False alarms depend on the drift decision mechanism
+		 *  -----------------------------------------------------------------------------------------------------------------
+		 *  
+		 * 	When driftDecisionMechanism == 0, if bkgLearner == null, false alarms cannot be raised. A comparison against CH is not possible as there is no bkg learner trained.
+	     *	 In this case, a drift signal has been raised and it cannot be stopped without false alarms. A bkg drift applies as only option available.
+		 *  
+         * 	When drift decision mechanism == 1 or 2, then false alarms are taken into consideration for drifts (the warning will be still active even if a false alarm is raised for a drift in the same active model).
+	    	 *	If the background learner is NULL, we consider that the drift signal may have been caused by a too sensitive drift detection parameterization.
+	    	 *	In this case, it's clearly too soon to change the active model. Therefore we raise a drift signal. 
+	     *		
+	     *	When drift decision mechanism == 2, we also raise a false alarm when the active model obtains less error than the bkg classifier and all of the classifiers from the CH.
+	     *		
+	     *  -----------------------------------------------------------------------------------------------------------------
+		 *	If the active classifier is not the best available choice / false alarm is raised, the following logic applies:
+		 *  -----------------------------------------------------------------------------------------------------------------
+		 *  If bkgBetterThanCHbaseClassifier == False, the minimum error of the base classifiers in the CH is not lower than the error of the bkg classifier. 
+		 *   Then, register background drift.
+		 *   
+		 *	If CHranking.size() == 0, no applicable concepts for the active model in the concept history. Then, we register background drift.
+	    	 *	Otherwise, a recurring drift is the best option. 
+	    	 *			    		 
+         * */
+        public boolean selectNextActiveModel() {
+ 
+	    		// 1 Raise a false alarm for the drift if the background learner is not ready
+	    		if (this.driftDecisionMechanism > 0 && this.bkgLearner == null) return registerDriftFalseAlarm();
+	        	
+	    		// 2 Retrieve best applicable model from Concept History
+        		int indexOfBestRanked = -1;
+        		double errorOfBestRanked = -1.0;
+        		HashMap<Integer, Double> ranking = rankConceptHistoryClassifiers();
+	    		if (ranking.size() > 0) {
+	    			indexOfBestRanked = getMinKey(ranking); // find index of concept with lowest value (error)
+	    			errorOfBestRanked = Collections.min(ranking.values());
+	    		}
+        		
+	    		// 3 Compare this against the background model and make the decision.
+	    		if (this.driftDecisionMechanism == 2) {
+    				if (activeBetterThanBKGbaseClassifier()) { 
+    					if (ranking.size() >0 && !activeBetterThanCHbaseClassifier(errorOfBestRanked))
+		    	    				 registerRecurringDrift(indexOfBestRanked); 
+    						// false alarm if active model is still the best one and when there are no applicable concepts.
+		    				else return registerDriftFalseAlarm(); 
+    				} else { 
+    			    		if(ranking.size() > 0 && bkgBetterThanCHbaseClassifier(errorOfBestRanked)) 
+    			    			registerRecurringDrift(indexOfBestRanked);
+    			    		else registerBkgDrift (); 					
+    				}
+    				
+    			// Drift decision mechanism == 0 or 1 (in an edge case where the bkgmodel is still NULL, we ignore the comparisons)
+	    		} else {
+	    			if(ranking.size() > 0 && this.bkgLearner != null && bkgBetterThanCHbaseClassifier(errorOfBestRanked)) 
+	    				registerRecurringDrift (indexOfBestRanked);
+			    	else registerBkgDrift ();
+	    		} 
 	    		
-	    		// If there are no available choices, the new active model will be the background one. Each bkg model has its own learner.
-    			if(ranking.size()>0) {
-		    		// 2 Compare this against the background model (in an edge case where the bkgmodel is still NULL, we ignore the comparisons)
-		    		if(this.bkgLearner != null && (Collections.min(ranking.values())<=((DynamicWindowClassificationPerformanceEvaluator) 
-							this.bkgLearner.internalWindowEvaluator).getFractionIncorrectlyClassified(this.bkgLearner.indexOriginal))){
-		    			// Register recurring drift
-		    			if (eventsLogFile != null && logLevel >= 0 ) logEvent(getRecurringDriftEvent(ranking));	
-		    			
-		    			// Extracts best recurring learner form concept history. It no longer exists in the concept history
-	    	            this.bkgLearner = ConceptHistory.extractConcept(getMinKey(ranking));
-		    		} else {
-		    			// System.out.println("The minimum recurrent concept error: "+
-		    			//		Collections.min(ranking.values())+" is not better than the bbk learner one: "+
-		    			//		((DynamicWindowClassificationPerformanceEvaluator) 
-		    			//				this.bkgLearner.internalWindowEvaluator).getFractionIncorrectlyClassified(this.bkgLearner.indexOriginal));
-		    			// Register background drift
-		    			if (eventsLogFile != null && logLevel >= 0 ) logEvent(getBkgDriftEvent());	
-		    		}
-    			} else {
-    				// System.out.println("0 applicable concepts for model  #"+this.indexOriginal+" in concept history.");
-    				// Register background drift
-	    			if (eventsLogFile != null && logLevel >= 0 ) logEvent(getBkgDriftEvent());	
-    			}
+	    		return false; // No false alarms raised at this point
         }
         
         /*private HashMap<Integer, Double> updateWithExistingConcepts(HashMap<Integer, Double> ranking) {
@@ -766,6 +803,23 @@ public class RCARF extends AbstractClassifier implements MultiClassClassifier {
 		    		}
 	    		} return ranking;
         }*/
+
+        // this.indexOriginal - pos of this model with active warning in ensemble
+        public HashMap<Integer, Double> rankConceptHistoryClassifiers () {
+	    		HashMap<Integer, Double> CHranking = new HashMap<Integer, Double>();
+	    		// Concept History owns only one learner per historic concept. But each learner saves all model's independent window size and priorEstimation in a HashMap.
+	    		for (Concept auxConcept : ConceptHistory.historyList.values()) 
+	    			// Only take into consideration Concepts sent to the Concept History after the current model raised a warning (see this consideration in reset*) 
+	    			if (auxConcept.ConceptLearner.internalWindowEvaluator != null && 
+	    					auxConcept.ConceptLearner.internalWindowEvaluator.containsIndex(this.indexOriginal)) { // checking indexOriginal to verify that it's an applicable concept
+		    			CHranking.put(auxConcept.getHistoryIndex(), ((DynamicWindowClassificationPerformanceEvaluator) 
+		    					auxConcept.ConceptLearner.internalWindowEvaluator).getFractionIncorrectlyClassified(this.indexOriginal)); // indexOriginal refers to the model we compare against. it should be an applicable concept.
+	    			}
+	    		
+	    		// Double check just in case the best concept is no longer in the concept history, or some concepts where created after the current model raised warning.
+	    		// CHranking = updateWithExistingConcepts(ranking);
+	    		return CHranking;
+        }
         
         // Aux method for getting the best classifier in a hashMap of (int modelIndex, double averageErrorInWindow) 
         private Integer getMinKey(Map<Integer, Double> map) {
@@ -782,7 +836,63 @@ public class RCARF extends AbstractClassifier implements MultiClassClassifier {
                 }
             } return minKey;
         }
- 
+        
+        // this.indexOriginal - pos of this model with active warning in ensemble
+        public boolean activeBetterThanBKGbaseClassifier() { 
+	        	// TODO? We may need to do use an internal evaluator for the active learner when driftDecisionMechanism==2. 
+	        	//		 But the resizing mechanism may need to be different, or compare to the bkg learner.
+	        	/* return (((DynamicWindowClassificationPerformanceEvaluator) this.internalWindowEvaluator)
+	        				.getFractionIncorrectlyClassified(this.indexOriginal) <= 
+	        			((DynamicWindowClassificationPerformanceEvaluator) this.bkgLearner.internalWindowEvaluator)
+	        				.getFractionIncorrectlyClassified(this.bkgLearner.indexOriginal));*/
+        	
+	        return (( this.evaluator.getFractionIncorrectlyClassified() <= 
+	        			((DynamicWindowClassificationPerformanceEvaluator) this.bkgLearner.internalWindowEvaluator)
+	        			.getFractionIncorrectlyClassified(this.bkgLearner.indexOriginal))); 
+	        // this.bkgLearner.indexOriginal == this.indexOriginal, as it is created for that same ensemble pos.  
+        }
+        
+        // this.indexOriginal - pos of this model with active warning in ensemble
+		public boolean activeBetterThanCHbaseClassifier(double bestFromCH) {			
+	        	// TODO? We may need to do use an internal evaluator for the active learner when driftDecisionMechanism==2. 
+	        	//		 But the resizing mechanism may need to be different, or compare to the bkg learner.
+	        	/* return (((DynamicWindowClassificationPerformanceEvaluator) this.internalWindowEvaluator)
+						.getFractionIncorrectlyClassified(this.indexOriginal) <= bestFromCH);*/
+			
+			return (this.evaluator.getFractionIncorrectlyClassified() <= bestFromCH);
+		}
+
+		// this.bkgLearner.indexOriginal - pos of bkg model if it becomes active in the ensemble
+		public boolean bkgBetterThanCHbaseClassifier(double bestFromCH) {
+			return (bestFromCH <= ((DynamicWindowClassificationPerformanceEvaluator) this.bkgLearner.internalWindowEvaluator)
+					.getFractionIncorrectlyClassified(this.bkgLearner.indexOriginal));
+	        // this.bkgLearner.indexOriginal == this.indexOriginal, as it is created for that same ensemble pos.  
+		}
+
+        public boolean registerDriftFalseAlarm () {
+			// Register false alarm.
+			if (this.eventsLogFile != null && this.logLevel >= 0 ) logEvent(getFalseAlarmEvent());	
+			
+			// Update false alarm (the active model will remain being the same)
+			return true;
+        }
+        
+        public void registerRecurringDrift (Integer indexOfBestRanked) {
+			// Register recurring drift
+			if (this.eventsLogFile != null && this.logLevel >= 0 ) logEvent(getRecurringDriftEvent(indexOfBestRanked));	
+			
+			// Extracts best recurring learner from concept history. It no longer exists in the concept history
+            this.bkgLearner = ConceptHistory.extractConcept(indexOfBestRanked);       	
+        }
+        
+        public void registerBkgDrift () {
+			// Register background drift
+			if (this.eventsLogFile != null && this.logLevel >= 0 ) logEvent(getBkgDriftEvent());	  
+        }
+        // ////////////////
+        
+        
+        
         public double[] getVotesForInstance(Instance instance) {
             DoubleVector vote = new DoubleVector(this.classifier.getVotesForInstance(instance));
             return vote.getArrayRef();
@@ -816,8 +926,8 @@ public class RCARF extends AbstractClassifier implements MultiClassClassifier {
         		String [] warningLog = {
     				String.valueOf(this.lastWarningOn), "WARNING-START", // event
     				String.valueOf(this.indexOriginal), String.valueOf(this.evaluator.getPerformanceMeasurements()[1].getValue()), 
-    				this.warningOption.getValueAsCLIString().replace("EvolvingADWINChangeDetector -a ", ""),
-    				this.driftOption.getValueAsCLIString().replace("EvolvingADWINChangeDetector -a ", ""), 
+    				this.warningOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""),
+    				this.driftOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""), 
     				String.valueOf(this.createdOn), String.valueOf(this.evaluator.getFractionIncorrectlyClassified()), 
     				String.valueOf(this.useRecurringLearner ? ConceptHistory.modelsOnWarning.size() : "N/A"),
     				String.valueOf(this.useRecurringLearner ? ConceptHistory.getNumberOfActiveWarnings() : "N/A"),
@@ -834,8 +944,8 @@ public class RCARF extends AbstractClassifier implements MultiClassClassifier {
 
 	    		String [] eventLog = {String.valueOf(this.lastDriftOn), "DRIFT TO BKG MODEL", String.valueOf(this.indexOriginal), 
 						String.valueOf(this.evaluator.getPerformanceMeasurements()[1].getValue()), 
-						this.warningOption.getValueAsCLIString().replace("EvolvingADWINChangeDetector -a ", ""), 
-						this.driftOption.getValueAsCLIString().replace("EvolvingADWINChangeDetector -a ", ""),
+						this.warningOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""), 
+						this.driftOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""),
 						String.valueOf(this.createdOn), String.valueOf(this.evaluator.getFractionIncorrectlyClassified()), 
 						String.valueOf(this.useRecurringLearner ? ConceptHistory.modelsOnWarning.size() : "N/A"), 
 						String.valueOf(this.useRecurringLearner ? ConceptHistory.getNumberOfActiveWarnings() : "N/A"), 
@@ -845,28 +955,45 @@ public class RCARF extends AbstractClassifier implements MultiClassClassifier {
         		return (new Event(eventLog));
 	    }
         
-        public Event getRecurringDriftEvent(Map<Integer, Double> ranking) {
+        public Event getRecurringDriftEvent(Integer indexOfBestRankedInCH) {
 	    		
-	    		//// System.out.println(ranking.size()); // TODO: debugging
-	    		//// System.out.println(getMinKey(ranking)); // TODO: debugging
-        	
-            // System.out.println("RECURRING DRIFT RESET IN POSITION #"+this.indexOriginal+" TO MODEL #"+ConceptHistory.historyList.get(getMinKey(ranking)).ensembleIndex); //+this.bkgLearner.indexOriginal);   
+	    		//// System.out.println(indexOfBestRankedInCH); // TODO: debugging
+        	        	
+            // System.out.println("RECURRING DRIFT RESET IN POSITION #"+this.indexOriginal+" TO MODEL #"+ConceptHistory.historyList.get(indexOfBestRankedInCH).ensembleIndex); //+this.bkgLearner.indexOriginal);   
 
         		String [] eventLog = {
     		        String.valueOf(this.lastDriftOn), "RECURRING DRIFT", String.valueOf(this.indexOriginal), 
 		    		String.valueOf(this.evaluator.getPerformanceMeasurements()[1].getValue()), 
-		    		this.warningOption.getValueAsCLIString().replace("EvolvingADWINChangeDetector -a ", ""), 
-		    		this.driftOption.getValueAsCLIString().replace("EvolvingADWINChangeDetector -a ", ""), 
+		    		this.warningOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""), 
+		    		this.driftOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""), 
 		    		String.valueOf(this.createdOn), String.valueOf(this.evaluator.getFractionIncorrectlyClassified()), 
 		    		String.valueOf(this.useRecurringLearner ? ConceptHistory.modelsOnWarning.size() : "N/A"),
 		    		String.valueOf(this.useRecurringLearner ? ConceptHistory.getNumberOfActiveWarnings() : "N/A"), 
 		    		String.valueOf(this.useRecurringLearner ? ConceptHistory.modelsOnWarning : "N/A"), "N/A",
-		    		String.valueOf(ConceptHistory.historyList.get(getMinKey(ranking)).ensembleIndex),
-		    		String.valueOf(ConceptHistory.historyList.get(getMinKey(ranking)).createdOn)
+		    		String.valueOf(ConceptHistory.historyList.get(indexOfBestRankedInCH).ensembleIndex),
+		    		String.valueOf(ConceptHistory.historyList.get(indexOfBestRankedInCH).createdOn)
         		};    
 	    		
         		return (new Event(eventLog));
         }
+                
+        public Event getFalseAlarmEvent() {
+        	
+            // System.out.println("DRIFT RESET IN MODEL #"+this.indexOriginal+" TO NEW BKG MODEL #"+this.bkgLearner.indexOriginal); 
+
+	    		String [] eventLog = {String.valueOf(this.lastDriftOn), "FALSE ALARM ON DRIFT SIGNAL", String.valueOf(this.indexOriginal), 
+						String.valueOf(this.evaluator.getPerformanceMeasurements()[1].getValue()), 
+						this.warningOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""), 
+						this.driftOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""),
+						String.valueOf(this.createdOn), String.valueOf(this.evaluator.getFractionIncorrectlyClassified()), 
+						String.valueOf(this.useRecurringLearner ? ConceptHistory.modelsOnWarning.size() : "N/A"), 
+						String.valueOf(this.useRecurringLearner ? ConceptHistory.getNumberOfActiveWarnings() : "N/A"), 
+						String.valueOf(this.useRecurringLearner ? ConceptHistory.modelsOnWarning : "N/A"), 
+						"N/A", "N/A", "N/A"};
+				    		
+        		return (new Event(eventLog));
+	    }
+        
 		
     }
       
