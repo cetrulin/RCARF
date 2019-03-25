@@ -48,8 +48,6 @@ import moa.evaluation.BasicClassificationPerformanceEvaluator;
 import moa.evaluation.DynamicWindowClassificationPerformanceEvaluator;
 import moa.evaluation.LearningPerformanceEvaluator;
 
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import moa.classifiers.core.driftdetection.ChangeDetector;
 import moa.classifiers.meta.EPCH.ConceptHistory;
 import moa.classifiers.meta.EPCH.Event;
@@ -83,9 +81,6 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
     public FloatOption lambdaOption = new FloatOption("lambda", 'a',
         "The lambda parameter for bagging.", 6.0, 1.0, Float.MAX_VALUE);
 
-    public IntOption numberOfJobsOption = new IntOption("numberOfJobs", 'j',
-        "Total number of concurrent jobs used for processing (-1 = as much as possible, 0 = do not use multithreading)", 1, -1, Integer.MAX_VALUE);
-    
     public ClassOption driftDetectionMethodOption = new ClassOption("driftDetectionMethod", 'x',
         "Change detector for drifts and its parameters", ChangeDetector.class, "ADWINChangeDetector -a 1.0E-5");
 
@@ -149,6 +144,9 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
     public IntOption warningWindowSizeThresholdOption = new IntOption("WarningWindowSizeThreshold", 'h', 
             "Threshold for warning window size that defines a false a alarm.", 300, 1, Integer.MAX_VALUE);
     
+    public int logLevel;
+
+    
 
 	// ////////////////////////////////////////////////
 	// ////////////////////////////////////////////////
@@ -159,12 +157,37 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
     protected long instancesSeen;
     protected int subspaceSize;
     protected BasicClassificationPerformanceEvaluator evaluator;
-	
-	GNG aux; // Added in EPCH
-
-    private ExecutorService executor;
     
-    PrintWriter eventsLogFile;
+    // Window statistics
+    
+    protected double lastError;
+
+    // Warning and Drifts
+    
+    public long lastDriftOn;		// TODO: Warning/drift detection should't be at this level.
+    public long lastWarningOn;	// TODO: Warning/drift detection should't be at this level.
+    
+    // The drift and warning object parameters. 
+    protected ClassOption driftOption;	// TODO: Warning/drift detection should't be at this level.
+    protected ClassOption warningOption;		// TODO: Warning/drift detection should't be at this level.
+    
+    // Drift and warning detection
+    protected ChangeDetector driftDetectionMethod;	// TODO: Warning/drift detection should't be at this level.
+    protected ChangeDetector warningDetectionMethod;		// TODO: Warning/drift detection should't be at this level.
+    
+    protected int numberOfDriftsDetected;	// TODO: Warning/drift detection should't be at this level.
+	protected int numberOfWarningsDetected;	// TODO: Warning/drift detection should't be at this level.
+	
+	PrintWriter eventsLogFile;
+
+
+	// Added in EPCH
+	GNG topology;
+	GNG newTopology;
+
+    ArrayList<Instance> W = new ArrayList<Instance>();  // list of training examples during warning window. TODO: this shouldn´t be at this level. move with drift/warning detectors
+	
+	// 
     
     @Override
     public void resetLearningImpl() {
@@ -172,26 +195,55 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
         this.ensemble = null;
         this.subspaceSize = 0;
         this.instancesSeen = 0;
+        this.topology = null;
+        
+        // ///////////////////////////////////
+        
+        // Reset warning and drift detection related attributes
+        this.lastDriftOn = 0;	// TODO: Warning/drift detection should't be at this level.
+        this.lastWarningOn = 0;  // TODO: Warning/drift detection should't be at this level.
+        
+        this.numberOfDriftsDetected = 0;		// TODO: Warning/drift detection should't be at this level.
+        this.numberOfWarningsDetected = 0;	// TODO: Warning/drift detection should't be at this level.
+        
+        // TODO: drift detector should't be at this level. it should be in the classifier manager 
+        // (in the place where the base learners are created), so there is only one of these.
+        if(!this.disableDriftDetectionOption.isSet()) {
+            //this.driftOption = driftOption;  not longer required
+            this.driftDetectionMethod = ((ChangeDetector) getPreparedClassOption(this.driftOption)).copy();
+        }
+
+        // Init Drift Detector for Warning detection. 
+        // TODO: Warning detection should't be at this level. it should be in the classifier manager 
+        // (in the place where the base learners are created), so there is only one of these.
+        if(!this.disableBackgroundLearnerOption.isSet()) {
+            //this.warningOption = warningOption;  not longer required
+            this.warningDetectionMethod = ((ChangeDetector) getPreparedClassOption(this.warningOption)).copy();
+        }
+        
+        // ///////////////////////////////////
+        
         this.evaluator = new BasicClassificationPerformanceEvaluator();
         
-        // Multi-threading
-        int numberOfJobs;
-        if(this.numberOfJobsOption.getValue() == -1) 
-            numberOfJobs = Runtime.getRuntime().availableProcessors();
-        else 
-            numberOfJobs = this.numberOfJobsOption.getValue();
-        // SINGLE_THREAD and requesting for only 1 thread are equivalent. 
-        // this.executor will be null and not used...
-        if(numberOfJobs != EPCH.SINGLE_THREAD && numberOfJobs != 1)
-            this.executor = Executors.newFixedThreadPool(numberOfJobs);
     }
 
     @Override
-    public void trainOnInstanceImpl(Instance instance) {
-    	
+	/** 
+	 * In EPCH, this method performs the actions of the classifier manager. 
+	 * Thus, in this method, warning and drift detection are performed.
+	 * This method also send instances to the ensemble classifiers. 
+	 *  Or to the single active classifier if ensemble size = 1 (default).
+	 *  
+	 *  New BKG classifiers and switching from and to CH may also need to be here.
+	 * */
+    public void trainOnInstanceImpl(Instance instance) {    	
         ++this.instancesSeen;
+        
+        if(this.topology == null)
+    			topology = new GNG();  // line 2
+        
         if(this.ensemble == null) 
-            initEnsemble(instance);
+            initEnsemble(instance); // line 1
         
         // 1 If the concept history is ready and it contains old classifiers, testing in each old classifier internal evaluator (to compare against bkg one)
         if (!disableRecurringDriftDetectionOption.isSet() && ConceptHistory.historyList != null && ConceptHistory.classifiersOnWarning.containsValue(true) && ConceptHistory.historyList.size() > 0) {
@@ -206,7 +258,6 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 	        	}
         } 
         
-        Collection<TrainingRunnable> trainers = new ArrayList<TrainingRunnable>();
         for (int i = 0 ; i < this.ensemble.length ; i++) {
             DoubleVector vote = new DoubleVector(this.ensemble[i].getVotesForInstance(instance));
             InstanceExample example = new InstanceExample(instance);
@@ -223,22 +274,399 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 	            }
             }
                         
-            if(this.executor != null) {
-                TrainingRunnable trainer = new TrainingRunnable(this.ensemble[i], instance, this.instancesSeen);  
-                trainers.add(trainer);
-            } else { // SINGLE_THREAD is in-place... 
-                this.ensemble[i].trainOnInstance(instance, this.instancesSeen);
-            }
-        }
-        
-        if(this.executor != null) {
-            try {
-                this.executor.invokeAll(trainers);
-            } catch (InterruptedException ex) {
-                throw new RuntimeException("Could not call invokeAll() on training threads.");
-            }
-        }
+		   trainOnInstance(i, instance, this.instancesSeen);
+        }    
     }
+
+    public void trainOnInstance(int ensemblePos, Instance instance, long instancesSeen) {
+	    	this.ensemble[ensemblePos].trainOnInstance(instance, instancesSeen); // Line 6: ClassifierTrain(c, x, y) -> Train c on the current instance (x, y).     
+	    
+	    // Set false alarms in case of drift at false as default
+	    boolean falseAlarm = false; // Included for cases where driftDecisionMechanism > 0 and recurring drifts are enabled.
+	    
+	    // Should it use a drift detector? Also, is it a backgroundLearner? If so, then do not "incept" another one. 
+	    if(!this.disableDriftDetectionOption.isSet() && !this.isBackgroundLearner) { // la segunda condicion de esta linea la iba a poner como !this.ensemble[ensemblePos].isBackgroundLearner
+	    		// todo dentro de aqui es para el classifier ppal.	// pero no tiene para nada buena pinta, porque cuando llegamos entonces a los bkg learners?
+	    															// TODO. pensar en si esto esta bien. madurar la idea y proponer forma alternativa si no.
+	        boolean correctlyClassifies = this.ensemble[ensemblePos].correctlyClassifies(instance);
+	        		
+	        // Check for warning only if useBkgLearner is active
+	        if(!this.disableBackgroundLearnerOption.isSet()) { 
+	            /*********** warning detection ***********/
+	            // Update the WARNING detection method
+	            this.warningDetectionMethod.input(correctlyClassifies ? 0 : 1);
+	            
+	            // TODO (confirm the next lines 7-15)
+	            if (W.size() > warningWindowSizeThresholdOption.getValue()) W.clear();	 // Lines 7-9:  False Alarm (Case 2)					
+	            if (W.size() > 1 && W.size() < warningWindowSizeThresholdOption.getValue()) { // Lines 10-15 if (size(W) 𝝐 (𝟏, 𝝁)) ->In warning window
+	            		if(this.ensemble[ensemblePos].bkgLearner != null) 
+	            			this.ensemble[ensemblePos].bkgLearner.classifier.trainOnInstance(instance);	// Line 11: Train the background classifier
+	            		W.add(instance);
+	            }
+	            else UpdateTopologyAlgorithm(this.topology, instance);  // Line 15:  Update centroids / prototypes.
+	            
+	            // Check if there was a change – in case of false alarm this triggers warning again and the bkglearner gets replaced
+	            if(this.warningDetectionMethod.getChange()) {  // line 16: warning detected?
+	                raiseWarning(instancesSeen);
+	                W.add(instance);	// TODO: here? (confirm) line 20
+	            } 
+	            
+	        } /*********** drift detection ***********/
+	        // Update the DRIFT detection method
+	        this.driftDetectionMethod.input(correctlyClassifies ? 0 : 1);
+	        // Check if there was a change
+	        if(this.driftDetectionMethod.getChange()) {  // line 22 drift detected?                		
+	            raiseDrift(ensemblePos, instancesSeen, falseAlarm);
+	        } 
+	        
+	    } if (this.eventsLogFile != null && logLevelOption.getValue() >= 2) logEvent(getTrainExampleEvent()); // Register training example in log
+
+    }
+    	    
+	// Starts Warning window
+	public void startWarningWindow() {
+		// 0 Reset warning window
+		this.bkgLearner = null;   // not 'this', the base classifier. but now warnings are at ensemble level. how do we handle this?
+	    if(! disableRecurringDriftDetectionOption.isSet()) {    	        	
+	        	this.internalWindowEvaluator = null;
+	        
+	    // 1 Updating objects with warning. Turns on windows flag in Concept History.
+	    // Also, if the concept history is ready and it contains old classifiers, add prior estimation and window size to each concepts history learner
+		ConceptHistory.classifiersOnWarning.put(this.indexOriginal, true);
+	    if(ConceptHistory.historyList != null && ConceptHistory.historyList.size() > 0) {
+	        	for (Concept oldClassifier : ConceptHistory.historyList.values()) {
+	        		// If the concept internal evaluator has been initialized for any other classifier on warning, add window size and last error of current classifier on warning 
+	        		if (oldClassifier.ConceptLearner.internalWindowEvaluator != null) {
+	        			//// System.out.println("ADDING VALUES TO INTERNAL EVALUATOR OF CONCEPT "+oldClassifier.historyIndex+" IN POS "+this.indexOriginal);
+		        		((DynamicWindowClassificationPerformanceEvaluator) 
+		        			oldClassifier.ConceptLearner.internalWindowEvaluator).addModel(this.indexOriginal,this.lastError,this.windowProperties.windowSize);
+	        		} 
+	        		// Otherwise, initialize a new internal evaluator for the concept
+	        		else {
+	        			//// System.out.println("INSTANCIATING FOR THE FIRST TIME INTERNAL EVALUATOR FOR CONCEPT "+oldClassifier.historyIndex+" IN POS "+this.indexOriginal);
+	       			DynamicWindowClassificationPerformanceEvaluator tmpInternalWindow = new DynamicWindowClassificationPerformanceEvaluator(
+	       				this.windowProperties.getSize(), this.windowProperties.getIncrements(), this.windowProperties.getMinSize(),
+	            			this.lastError, this.windowProperties.getDecisionThreshold(),
+	            			this.windowProperties.getDynamicWindowInOldClassifiersFlag(), this.windowProperties.getResizingPolicy(),
+	            			this.indexOriginal, "created for old-retrieved classifier in ensembleIndex #"+this.indexOriginal);  	
+	       			tmpInternalWindow.reset(); 
+	       			
+	       			oldClassifier.ConceptLearner.internalWindowEvaluator = tmpInternalWindow;
+	        		}
+	        	}
+	    } 
+	    } 
+		// Log warning     
+	    if (eventsLogFile != null && logLevelOption.getValue() >= 1 ) logEvent(getWarningEvent());
+	
+		// 2 Create background Classifier
+		createBkgClassifier();	// line 18: create background classifier
+		W.clear();	 // line 19: (TODO: correct?) 
+		
+		// Update the warning detection object for the current object 
+		// (this effectively resets changes made to the object while it was still a bkg learner). 
+		this.warningDetectionMethod = ((ChangeDetector) getPreparedClassOption(this.warningOption)).copy();
+	}
+	
+	private void raiseWarning(int ensemblePos, long instancesSeen) {
+		this.lastWarningOn = instancesSeen;
+		// TODO: update here 'lastWarningOn' flag in classifiers of the ensemble, or in another entity
+		this.numberOfWarningsDetected++;
+
+		// 1 Update last error and make a backup of the current classifier in a concept object (the active one will be in use until the Drift is confirmed). 
+		// As there is no false alarms explicit mechanism (bkgLeaners keep running till replaced), this has been moved here.
+		if(!this.disableRecurringDriftDetectionOption.isSet()) this.ensemble[ensemblePos].saveCurrentConcept(instancesSeen);  // line 17: Save a tmp copy of c as snapshot
+		// TODO. call (saveCurrentConcept) of the baseClassifier
+		   
+		// 2 Start warning window to create bkg learner and retrieve old classifiers (if option enabled)
+		startWarningWindow();  // lines 18-19
+	} 
+		
+	/**
+	 * Aux method to select the next concept classifier and topology when a drift is raised
+	 * Pselected is:
+		a new P (Pn) in case of bkgDrift;
+		Pc in case of false alarm; 
+		and Ph in case of recurring drift.
+	 * */
+	private void raiseDrift(int ensemblePos, long instancesSeen, boolean falseAlarm, PrintWriter eventsLogFile, int logLevel) {
+		this.lastDriftOn = instancesSeen;
+		this.numberOfDriftsDetected++;
+		//toLog = false;
+					
+  		// 1 Compare DT results using Window method and pick the best one between concept history and bkg classifier.
+  		// It returns the best classifier in the object of the bkgLearner
+		//  if there is not another base classifier with lower error than active classifier (and driftDecisionMechanism > 0), then a false alarm is raised
+		if (!this.disableRecurringDriftDetectionOption.isSet()) falseAlarm = selectNextActiveClassifier();  // line 32:  c = FindClassifier(c, b, GH) -> Assign best transition to next state
+		else if (eventsLogFile != null && logLevel >= 1 ) logEvent(getBkgDriftEvent(ensemblePos)); 
+		      
+		// 2 Transition to new classifier (only if there is no false alarms)
+		if (!falseAlarm) this.ensemble[ensemblePos].reset(); 
+		
+		// asuarez. 25 sept 2018
+		// IMPORTANT. False alarms avoid drifts, but they do not disable a certain warning on a base classifier. // any TODO here??
+		// In cases of a false alarm, the active classifiers will still have an active warning.
+		
+	}
+
+	 /** 
+         *  This method ranks all applicable base classifiers in the Concept History (CH)
+         *  It also selects the next classifier to be active, or it raises a false alarm if the drift should be reconsidered.
+         * 
+		 *  -----------------------------------------------------------------------------------------------------------------
+         *  False alarms depend on the drift decision mechanism
+		 *  -----------------------------------------------------------------------------------------------------------------
+		 *  
+		 * 	When driftDecisionMechanism == 0, if bkgLearner == null, false alarms cannot be raised. A comparison against CH is not possible as there is no bkg learner trained.
+	     *	 In this case, a drift signal has been raised and it cannot be stopped without false alarms. A bkg drift applies as only option available.
+		 *  
+         * 	When drift decision mechanism == 1 or 2, then false alarms are taken into consideration for drifts (the warning will be still active even if a false alarm is raised for a drift in the same active classifier).
+	    	 *	If the background learner is NULL, we consider that the drift signal may have been caused by a too sensitive drift detection parameterization.
+	    	 *	In this case, it's clearly too soon to change the active classifier. Therefore we raise a drift signal. 
+	     *		
+	     *	When drift decision mechanism == 2, we also raise a false alarm when the active classifier obtains less error than the bkg classifier and all of the classifiers from the CH.
+	     *		
+	     *  -----------------------------------------------------------------------------------------------------------------
+		 *	If the active classifier is not the best available choice / false alarm is raised, the following logic applies:
+		 *  -----------------------------------------------------------------------------------------------------------------
+		 *  If bkgBetterThanCHbaseClassifier == False, the minimum error of the base classifiers in the CH is not lower than the error of the bkg classifier. 
+		 *   Then, register background drift.
+		 *   
+		 *	If CHranking.size() == 0, no applicable concepts for the active classifier in the concept history. Then, we register background drift.
+	    	 *	Otherwise, a recurring drift is the best option. 
+         * @param historyGroup 
+	    	 *			    		 
+         * */
+        public boolean selectNextActiveClassifier(int ensemblePos) { // TODO: verify that ensemblePos makes sense here. maybe not??
+			// TODO: confirm use the input parameter 'historyGroup', that refers to the most similar group of classifiers in the Concept History
+			
+		// Start retrieval from CH 
+		int historyGroup = findGroup(W); // line 31: Group for retrieval of next state (TODO)
+		
+			// 1 Raise a false alarm for the drift if the background learner is not ready
+			if (this.driftDecisionMechanism > 0 && this.bkgLearner == null) return registerDriftFalseAlarm();
+			
+			// 2 Retrieve best applicable classifier from Concept History
+			int indexOfBestRanked = -1;
+			double errorOfBestRanked = -1.0;
+			HashMap<Integer, Double> ranking = rankConceptHistoryClassifiers(historyGroup);
+			if (ranking.size() > 0) {
+				indexOfBestRanked = getMinKey(ranking); // find index of concept with lowest value (error)
+				errorOfBestRanked = Collections.min(ranking.values());
+			}
+			
+			// 3 Compare this against the background classifier and make the decision.
+			if (this.driftDecisionMechanism == 2) {
+				if (activeBetterThanBKGbaseClassifier()) { 
+					if (ranking.size() >0 && !activeBetterThanCHbaseClassifier(errorOfBestRanked))
+								 registerRecurringDrift(indexOfBestRanked, historyGroup); 
+						// false alarm if active classifier is still the best one and when there are no applicable concepts.
+						else return registerDriftFalseAlarm(); 
+				} else { 
+						if(ranking.size() > 0 && bkgBetterThanCHbaseClassifier(errorOfBestRanked)) 
+							registerRecurringDrift(indexOfBestRanked, historyGroup);
+						else registerBkgDrift(); 					
+				}
+				
+			// Drift decision mechanism == 0 or 1 (in an edge case where the bkgclassifier is still NULL, we ignore the comparisons)
+			} else {
+				if(ranking.size() > 0 && this.bkgLearner != null && bkgBetterThanCHbaseClassifier(errorOfBestRanked)) 
+					registerRecurringDrift (ensemblePos, indexOfBestRanked, historyGroup);
+				else registerBkgDrift ();
+			} 
+			
+			return false; // No false alarms raised at this point
+	}
+
+	// this.indexOriginal - pos of this classifier with active warning in ensemble
+	public HashMap<Integer, Double> rankConceptHistoryClassifiers (int historyGroup) {
+			HashMap<Integer, Double> CHranking = new HashMap<Integer, Double>();
+			// Concept History owns only one learner per historic concept. But each learner saves all classifier's independent window size and priorEstimation in a HashMap.
+			// for (Concept auxConcept : ConceptHistory.historyList[historyGroup].values()) 
+			for (Concept auxConcept : ConceptHistory.historyList.values()) // TODO: replace with the line above
+				// Only take into consideration Concepts sent to the Concept History after the current classifier raised a warning (see this consideration in reset*) 
+				if (auxConcept.ConceptLearner.internalWindowEvaluator != null && 
+						auxConcept.ConceptLearner.internalWindowEvaluator.containsIndex(this.indexOriginal)) { // checking indexOriginal to verify that it's an applicable concept
+					CHranking.put(auxConcept.getHistoryIndex(), ((DynamicWindowClassificationPerformanceEvaluator) 
+							auxConcept.ConceptLearner.internalWindowEvaluator).getFractionIncorrectlyClassified(this.indexOriginal)); // indexOriginal refers to the classifier we compare against. it should be an applicable concept.
+				}
+			
+			return CHranking;
+	}
+	
+	// Aux method for getting the best classifier in a hashMap of (int classifierIndex, double averageErrorInWindow) 
+	private Integer getMinKey(Map<Integer, Double> map) {
+			Integer minKey = null;
+			// System.out.println("map is: "+map+" number of keys is: "+map.keySet().size()); // TODO. debugging
+		double minValue = Double.MAX_VALUE;
+		for(Integer key : map.keySet()) {
+				// System.out.println("Key is:"+key+" with value: "+map.get(key));
+			 double value = map.get(key);
+			 if(value < minValue) {
+				   // System.out.println("Min error is: "+ value+" with key: "+key);
+				minValue = value;
+				minKey = key;
+			}
+		} return minKey;
+	}
+	
+	// this.indexOriginal - pos of this classifier with active warning in ensemble
+	public boolean activeBetterThanBKGbaseClassifier() { 
+			// TODO? We may need to do use an internal evaluator for the active learner when driftDecisionMechanism==2. 
+			//		 But the resizing mechanism may need to be different, or compare to the bkg learner.
+			/* return (((DynamicWindowClassificationPerformanceEvaluator) this.internalWindowEvaluator)
+						.getFractionIncorrectlyClassified(this.indexOriginal) <= 
+					((DynamicWindowClassificationPerformanceEvaluator) this.bkgLearner.internalWindowEvaluator)
+						.getFractionIncorrectlyClassified(this.bkgLearner.indexOriginal));*/
+		
+		return (( this.evaluator.getFractionIncorrectlyClassified() <= 
+					((DynamicWindowClassificationPerformanceEvaluator) this.bkgLearner.internalWindowEvaluator)
+					.getFractionIncorrectlyClassified(this.bkgLearner.indexOriginal))); 
+		// this.bkgLearner.indexOriginal == this.indexOriginal, as it is created for that same ensemble pos.  
+	}
+	
+	// this.indexOriginal - pos of this classifier with active warning in ensemble
+	public boolean activeBetterThanCHbaseClassifier(double bestFromCH) {			
+			// TODO? We may need to do use an internal evaluator for the active learner when driftDecisionMechanism==2. 
+			//		 But the resizing mechanism may need to be different, or compare to the bkg learner.
+			/* return (((DynamicWindowClassificationPerformanceEvaluator) this.internalWindowEvaluator)
+					.getFractionIncorrectlyClassified(this.indexOriginal) <= bestFromCH);*/
+		
+		return (this.evaluator.getFractionIncorrectlyClassified() <= bestFromCH);
+	}
+
+	// this.bkgLearner.indexOriginal - pos of bkg classifier if it becomes active in the ensemble
+	public boolean bkgBetterThanCHbaseClassifier(double bestFromCH) {
+		return (bestFromCH <= ((DynamicWindowClassificationPerformanceEvaluator) this.bkgLearner.internalWindowEvaluator)
+				.getFractionIncorrectlyClassified(this.bkgLearner.indexOriginal));
+		// this.bkgLearner.indexOriginal == this.indexOriginal, as it is created for that same ensemble pos.  
+	}
+
+	public boolean registerDriftFalseAlarm (int ensemblePos) {
+		// Register false alarm.
+		if (this.eventsLogFile != null && this.logLevel >= 0 ) logEvent(getFalseAlarmEvent(ensemblePos));	
+		this.newTopology = null;  // then Pn = Pc  // TODO: confirm
+		// this.newPrototypes = getPrototypes(newTopology);  // line 33   (TODO: confirm that this is not necessary)
+		
+		// Update false alarm (the active classifier will remain being the same)
+		return true;
+	}
+	
+	public void registerRecurringDrift (int ensemblePos, Integer indexOfBestRanked, int historyGroup) {
+		// Register recurring drift
+		if (this.eventsLogFile != null && this.logLevel >= 0 ) logEvent(getRecurringDriftEvent(indexOfBestRanked, ensemblePos));	
+		
+		// Extracts best recurring learner from concept history. It no longer exists in the concept history
+		this.ensemble[ensemblePos].bkgLearner = ConceptHistory.copyConcept(indexOfBestRanked);  // TODO: replace with the row below
+		// this.bkgLearner = ConceptHistory.extractConcept(historyGroup, indexOfBestRanked); // TODO: this should come from a Group
+		// this.newTopology = ConceptHistory.getGroupTopology(historyGroup); // TODO:
+		// this.newPrototypes = getPrototypes(newTopology);  // line 33   (TODO: confirm that this is not necessary)
+	}
+	
+	public void registerBkgDrift (int ensemblePos) {
+		// Register background drift
+		if (this.eventsLogFile != null && this.logLevel >= 0 ) logEvent(getBkgDriftEvent(ensemblePos));
+		// this.newTopology = new GNG();		// TODO
+		// newTopology.train(W);				// TODO
+		// this.newPrototypes = getPrototypes(newTopology);  // line 33   (TODO: confirm that this is not necessary)
+	}
+	
+    // Auxiliar methods for logging events
+    
+    public Event getTrainExampleEvent(int indexOriginal) {
+    		String [] eventLog = {
+	        String.valueOf(instancesSeen), "Train example", String.valueOf(indexOriginal), // TODO: not THIS. in the base classifier
+			String.valueOf(this.evaluator.getPerformanceMeasurements()[1].getValue()), 
+			this.warningOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""), 
+			this.driftOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""), 
+			String.valueOf(this.instancesSeen), String.valueOf(this.evaluator.getFractionIncorrectlyClassified()), 
+			String.valueOf(! this.disableRecurringDriftDetectionOption.isSet() ? ConceptHistory.classifiersOnWarning.size() : "N/A"),
+			String.valueOf(! this.disableRecurringDriftDetectionOption.isSet() ? ConceptHistory.getNumberOfActiveWarnings() : "N/A"),
+			String.valueOf(! this.disableRecurringDriftDetectionOption.isSet() ? ConceptHistory.classifiersOnWarning : "N/A"), "N/A", "N/A", "N/A"};
+    		
+    		return (new Event(eventLog));
+    }
+       
+    public Event getWarningEvent(int indexOriginal) {
+    	
+        // System.out.println();
+        // System.out.println("-------------------------------------------------");
+        // System.out.println("WARNING ON IN MODEL #"+this.indexOriginal+". Warning flag status (activeClassifierPos, Flag): "+ConceptHistory.classifiersOnWarning);
+        // System.out.println("CONCEPT HISTORY STATE AND APPLICABLE FROM THIS WARNING IS: "+ConceptHistory.historyList.keySet().toString());
+        // System.out.println("-------------------------------------------------");
+        // System.out.println();
+    	
+    		String [] warningLog = {
+				String.valueOf(this.lastWarningOn), "WARNING-START", // event
+				String.valueOf(indexOriginal), String.valueOf(this.evaluator.getPerformanceMeasurements()[1].getValue()),  // TODO: not THIS. in the base classifier
+				this.warningOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""),
+				this.driftOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""), 
+				String.valueOf(this.instancesSeen), String.valueOf(this.evaluator.getFractionIncorrectlyClassified()), 
+				String.valueOf(! this.disableRecurringDriftDetectionOption.isSet() ? ConceptHistory.classifiersOnWarning.size() : "N/A"),
+				String.valueOf(! this.disableRecurringDriftDetectionOption.isSet() ? ConceptHistory.getNumberOfActiveWarnings() : "N/A"),
+				String.valueOf(! this.disableRecurringDriftDetectionOption.isSet() ? ConceptHistory.classifiersOnWarning : "N/A"), 
+				! this.disableRecurringDriftDetectionOption.isSet() ? ConceptHistory.historyList.keySet().toString() : "N/A", "N/A", "N/A"};
+    		//1279,1,WARNING-START,0.74,{F,T,F;F;F;F},...
+
+    		return (new Event(warningLog));
+    }
+    
+    public Event getBkgDriftEvent(int indexOriginal) {
+    	
+        // System.out.println("DRIFT RESET IN MODEL #"+this.indexOriginal+" TO NEW BKG MODEL #"+this.bkgLearner.indexOriginal); 
+
+    		String [] eventLog = {String.valueOf(this.lastDriftOn), "DRIFT TO BKG MODEL", String.valueOf(indexOriginal),  // TODO: not THIS. in the base classifier
+					String.valueOf(this.evaluator.getPerformanceMeasurements()[1].getValue()), 
+					this.warningOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""), 
+					this.driftOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""),
+					String.valueOf(this.instancesSeen), String.valueOf(this.evaluator.getFractionIncorrectlyClassified()), 
+					String.valueOf(! this.disableRecurringDriftDetectionOption.isSet() ? ConceptHistory.classifiersOnWarning.size() : "N/A"), 
+					String.valueOf(! this.disableRecurringDriftDetectionOption.isSet() ? ConceptHistory.getNumberOfActiveWarnings() : "N/A"), 
+					String.valueOf(! this.disableRecurringDriftDetectionOption.isSet() ? ConceptHistory.classifiersOnWarning : "N/A"), 
+					"N/A", "N/A", "N/A"};    
+			    		
+    		return (new Event(eventLog));
+    }
+    
+    public Event getRecurringDriftEvent(Integer indexOfBestRankedInCH, int indexOriginal) {
+    		
+    		//// System.out.println(indexOfBestRankedInCH); // TODO: debugging
+    	        	
+        // System.out.println("RECURRING DRIFT RESET IN POSITION #"+this.indexOriginal+" TO MODEL #"+ConceptHistory.historyList.get(indexOfBestRankedInCH).ensembleIndex); //+this.bkgLearner.indexOriginal);   
+
+    		String [] eventLog = {
+		        String.valueOf(this.lastDriftOn), "RECURRING DRIFT", String.valueOf(indexOriginal),  // TODO: not THIS. in the base classifier
+	    		String.valueOf(this.evaluator.getPerformanceMeasurements()[1].getValue()), 
+	    		this.warningOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""), 
+	    		this.driftOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""), 
+	    		String.valueOf(this.instancesSeen), String.valueOf(this.evaluator.getFractionIncorrectlyClassified()), 
+	    		String.valueOf(! this.disableRecurringDriftDetectionOption.isSet() ? ConceptHistory.classifiersOnWarning.size() : "N/A"),
+	    		String.valueOf(! this.disableRecurringDriftDetectionOption.isSet() ? ConceptHistory.getNumberOfActiveWarnings() : "N/A"), 
+	    		String.valueOf(! this.disableRecurringDriftDetectionOption.isSet() ? ConceptHistory.classifiersOnWarning : "N/A"), "N/A",
+	    		String.valueOf(ConceptHistory.historyList.get(indexOfBestRankedInCH).ensembleIndex),
+	    		String.valueOf(ConceptHistory.historyList.get(indexOfBestRankedInCH).createdOn)
+    		};    
+    		
+    		return (new Event(eventLog));
+    }
+            
+    public Event getFalseAlarmEvent(int indexOriginal) {
+    	
+        // System.out.println("DRIFT RESET IN MODEL #"+this.indexOriginal+" TO NEW BKG MODEL #"+this.bkgLearner.indexOriginal); 
+
+    		String [] eventLog = {String.valueOf(this.lastDriftOn), "FALSE ALARM ON DRIFT SIGNAL", String.valueOf(indexOriginal),  // TODO: not THIS. in the base classifier
+					String.valueOf(this.evaluator.getPerformanceMeasurements()[1].getValue()), 
+					this.warningOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""), 
+					this.driftOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""),
+					String.valueOf(this.instancesSeen), String.valueOf(this.evaluator.getFractionIncorrectlyClassified()), 
+					String.valueOf(! this.disableRecurringDriftDetectionOption.isSet() ? ConceptHistory.classifiersOnWarning.size() : "N/A"), 
+					String.valueOf(! this.disableRecurringDriftDetectionOption.isSet() ? ConceptHistory.getNumberOfActiveWarnings() : "N/A"), 
+					String.valueOf(! this.disableRecurringDriftDetectionOption.isSet() ? ConceptHistory.classifiersOnWarning : "N/A"), 
+					"N/A", "N/A", "N/A"};
+			    		
+    		return (new Event(eventLog));
+    }
+
 
     @Override
     public double[] getVotesForInstance(Instance instance) {
@@ -246,7 +674,8 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
         if(this.ensemble == null) 
             initEnsemble(testInstance);
         DoubleVector combinedVote = new DoubleVector();
-
+        
+        // TODO: Change this testing/predict function. Do we need voting? Bear in mind that at some point we'll have many classifiers.
         for(int i = 0 ; i < this.ensemble.length ; ++i) {
             DoubleVector vote = new DoubleVector(this.ensemble[i].getVotesForInstance(testInstance));
             if (vote.sumOfValues() > 0.0) {
@@ -276,6 +705,17 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
     protected Measurement[] getModelMeasurementsImpl() {
         return null;
     }
+    
+	/** Batch method */
+    public GNG UpdateTopologyAlgorithm(GNG newTopology2, ArrayList<Instance> w2){
+			// TODO
+		return newTopology2;  // if topology (Pc) is global, then we don´t need to return this here
+    }
+    
+    /** Incremental method */
+	private void UpdateTopologyAlgorithm(GNG topology2, Instance instance) {
+		// TODO Auto-generated method stub
+	}
 
     
     protected void initEnsemble(Instance instance) {
@@ -312,19 +752,19 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
                 (Classifier) learner.copy(), 
                 (BasicClassificationPerformanceEvaluator) classificationEvaluator.copy(), 
                 this.instancesSeen, 
-                ! this.disableBackgroundLearnerOption.isSet(),
-                ! this.disableDriftDetectionOption.isSet(), 
-                driftDecisionMechanismOption.getValue(),
-                driftDetectionMethodOption,
-                warningDetectionMethodOption,
-                false,
+                ! this.disableBackgroundLearnerOption.isSet(),  // these are still needed con the level below
+                ! this.disableDriftDetectionOption.isSet(), 	// these are still needed con the level below
+                // driftDecisionMechanismOption.getValue(),
+                //driftDetectionMethodOption,
+                //warningDetectionMethodOption,
+                false, // isbkglearner
                 ! this.disableRecurringDriftDetectionOption.isSet(),
                 false, // @suarezcetrulo : first classifier is not old. An old classifier (retrieved from the concept history).
                 new Window(this.defaultWindowOption.getValue(), this.windowIncrementsOption.getValue(), this.minWindowSizeOption.getValue(), this.thresholdOption.getValue(), 
         				this.rememberConceptWindowOption.isSet()? true: false, this.resizeAllWindowsOption.isSet()? true: false, windowResizePolicyOption.getValue()),
                 null, // @suarezcetrulo : Windows start at NULL
-                eventsLogFile,
-                logLevelOption.getValue(),
+                // eventsLogFile,
+                // logLevelOption.getValue(),
                 warningWindowSizeThresholdOption.getValue(),
                 new GNG()
             		);
@@ -338,24 +778,14 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
     protected final class EPCHBaseLearner {
         public int indexOriginal;
         public long createdOn;
-        public long lastDriftOn;		// TODO: Warning/drift detection should't be at this level.
-        public long lastWarningOn;	// TODO: Warning/drift detection should't be at this level.
         public Classifier classifier;
         public boolean isBackgroundLearner;
         public boolean isOldLearner; // only for reference
         
-        // The drift and warning object parameters. 
-        protected ClassOption driftOption;	// TODO: Warning/drift detection should't be at this level.
-        protected ClassOption warningOption;		// TODO: Warning/drift detection should't be at this level.
-        
-        // Drift and warning detection
-        protected ChangeDetector driftDetectionMethod;	// TODO: Warning/drift detection should't be at this level.
-        protected ChangeDetector warningDetectionMethod;		// TODO: Warning/drift detection should't be at this level.
-        
-        public boolean useBkgLearner;
+        public boolean useBkgLearner; // these flags are still necessary at this level
         public boolean useDriftDetector;
         public boolean useRecurringLearner; // @suarezcetrulo
-        public int driftDecisionMechanism; // @suarezcetrulo
+        // public int driftDecisionMechanism; // @suarezcetrulo
         
         // Bkg learner
         protected EPCHBaseLearner bkgLearner;
@@ -363,63 +793,45 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
         protected Concept tmpCopyOfClassifier;  
         // Statistics
         public BasicClassificationPerformanceEvaluator evaluator;
-        protected int numberOfDriftsDetected;	// TODO: Warning/drift detection should't be at this level.
-        protected int numberOfWarningsDetected;	// TODO: Warning/drift detection should't be at this level.
-
+       
         // Internal statistics
         public DynamicWindowClassificationPerformanceEvaluator internalWindowEvaluator; // only used in background and old classifiers
-        protected double lastError;
+        protected double lastError;  // TODO: now this variable is duplicated. also present on the level above (CM), so watch out!
         protected Window windowProperties;
         
         public PrintWriter eventsLogFile;
-        public int logLevel;
+        // public int logLevel;
         
         // new on EPHC
-        ArrayList<Instance> W = new ArrayList<Instance>();  // list of training examples during warning window. TODO: this shouldn´t be at this level. move with drift/warning detectors
         GNG newTopology = null;
         GNG topology = null;
         // ArrayList<GUnit> newPrototypes = null;
         int warningWindowSizeThreshold = -1;
-
+        
         
         private void init(int indexOriginal, Classifier classifier, BasicClassificationPerformanceEvaluator evaluatorInstantiated, 
-            long instancesSeen, boolean useBkgLearner, boolean useDriftDetector, int driftDecisionMechanism, ClassOption driftOption, ClassOption warningOption, boolean isBackgroundLearner, 
-            boolean useRecurringLearner, boolean isOldLearner, Window windowProperties, DynamicWindowClassificationPerformanceEvaluator internalEvaluator,
-            PrintWriter eventsLogFile, int logLevel, int warningWindowSizeThreshold, GNG topology) { // last parameters added by @suarezcetrulo
+            long instancesSeen, 
+        		boolean useBkgLearner, boolean useDriftDetector, //int driftDecisionMechanism, 
+            boolean isBackgroundLearner, boolean useRecurringLearner, boolean isOldLearner, Window windowProperties, DynamicWindowClassificationPerformanceEvaluator internalEvaluator,
+            // PrintWriter eventsLogFile, int logLevel, 
+            int warningWindowSizeThreshold, GNG topology) { // last parameters added by @suarezcetrulo
+        	
             this.indexOriginal = indexOriginal;
             this.createdOn = instancesSeen;
-            this.lastDriftOn = 0;	// TODO: Warning/drift detection should't be at this level.
-            this.lastWarningOn = 0;  // TODO: Warning/drift detection should't be at this level.
-            this.eventsLogFile = eventsLogFile;
-            this.logLevel = logLevel;
+            // this.eventsLogFile = eventsLogFile;
+            // this.logLevel = logLevel;
             
             this.classifier = classifier;
             this.evaluator = evaluatorInstantiated;
-            this.useBkgLearner = useBkgLearner;
-            this.useRecurringLearner = useRecurringLearner;
+            
+            this.useBkgLearner = useBkgLearner; // TODO: Warning/drift detection should't be at this level.
+            this.useRecurringLearner = useRecurringLearner; // TODO: Warning/drift detection should't be at this level.
             this.useDriftDetector = useDriftDetector;  // TODO: Warning/drift detection should't be at this level.
-            this.driftDecisionMechanism = driftDecisionMechanism;
+            // this.driftDecisionMechanism = driftDecisionMechanism; // TODO: Warning/drift detection should't be at this level.
             
-            this.numberOfDriftsDetected = 0;		// TODO: Warning/drift detection should't be at this level.
-            this.numberOfWarningsDetected = 0;	// TODO: Warning/drift detection should't be at this level.
             this.isBackgroundLearner = isBackgroundLearner;
-                        
-            // TODO: drift detector should't be at this level. it should be in the classifier manager 
-            // (in the place where the base learners are created), so there is only one of these.
-            if(this.useDriftDetector) {
-                this.driftOption = driftOption;
-                this.driftDetectionMethod = ((ChangeDetector) getPreparedClassOption(this.driftOption)).copy();
-            }
-
-            // Init Drift Detector for Warning detection. 
-            // TODO: Warning detection should't be at this level. it should be in the classifier manager 
-            // (in the place where the base learners are created), so there is only one of these.
-            if(this.useBkgLearner) {
-                this.warningOption = warningOption;
-                this.warningDetectionMethod = ((ChangeDetector) getPreparedClassOption(this.warningOption)).copy();
-            }       
             
-            if (useRecurringLearner) {
+            if (useRecurringLearner) { // !this.disableRecurringDriftDetectionOption.isSet() ?  // TODO move to classifier manager? 
                 // Window params
                 this.windowProperties=windowProperties;
                 // Recurring drifts
@@ -432,16 +844,23 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
             this.warningWindowSizeThreshold = warningWindowSizeThreshold;
             	this.topology = topology;
         }
+        
+        public boolean correctlyClassifies(Instance instance) {
+			return this.classifier.correctlyClassifies(instance);
+		}
 
-        // last inputs parameters added by @suarezcetrulo
+		// last inputs parameters added by @suarezcetrulo
         public EPCHBaseLearner(int indexOriginal, Classifier classifier, BasicClassificationPerformanceEvaluator evaluatorInstantiated, 
-                    long instancesSeen, boolean useBkgLearner, boolean useDriftDetector, int driftDecisionMechanism, ClassOption driftOption, ClassOption warningOption, 
-                    boolean isBackgroundLearner, boolean useRecurringLearner, boolean isOldLearner, 
-                    Window windowProperties, DynamicWindowClassificationPerformanceEvaluator bkgInternalEvaluator, PrintWriter eventsLogFile, int logLevel, 
+                    long instancesSeen, 
+        			   boolean useBkgLearner, boolean useDriftDetector, // int driftDecisionMechanism,
+                    boolean isBackgroundLearner,  boolean useRecurringLearner, boolean isOldLearner, 
+                    Window windowProperties, DynamicWindowClassificationPerformanceEvaluator bkgInternalEvaluator, 
+                    // PrintWriter eventsLogFile, int logLevel, 
                     int warningWindowSizeThreshold, GNG topology) {
-            init(indexOriginal, classifier, evaluatorInstantiated, instancesSeen, useBkgLearner, 
-            		 useDriftDetector, driftDecisionMechanism, driftOption, warningOption, isBackgroundLearner, useRecurringLearner,  isOldLearner, 
-            		 windowProperties,bkgInternalEvaluator, eventsLogFile, logLevel, warningWindowSizeThreshold, topology);
+            init(indexOriginal, classifier, evaluatorInstantiated, instancesSeen, useBkgLearner, useDriftDetector, // driftDecisionMechanism, 
+            		isBackgroundLearner, useRecurringLearner, isOldLearner, 
+            		 windowProperties, bkgInternalEvaluator, // eventsLogFile, logLevel, 
+            		 warningWindowSizeThreshold, topology);
         }
 
         public void reset() {
@@ -451,15 +870,16 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
             // System.out.println("RESET (WARNING OFF) IN MODEL #"+this.indexOriginal+". Warning flag status (activeClassifierPos, Flag): "+ConceptHistory.classifiersOnWarning);
             // System.out.println("-------------------------------------------------");
             // System.out.println();
-		   // Transition to the best bkg or retrieved old learner
+		    // Transition to the best bkg or retrieved old learner
         		if (this.useBkgLearner && this.bkgLearner != null) {
+        			// userRecurringLearner = ! this.disableRecurringDriftDetectionOption.isSet()
         		   if(this.useRecurringLearner) { // && ConceptHistory.historyList != null && ConceptHistory.historyList.size() > 0) {
         			  // 1 Decrease amount of warnings in concept history and from evaluators
         			  ConceptHistory.classifiersOnWarning.put(this.indexOriginal, false);
         			  if(ConceptHistory.historyList != null && ConceptHistory.historyList.size() > 0) {
         				  for (Concept oldClassifier : ConceptHistory.historyList.values()) {
         					  if (oldClassifier.ConceptLearner.internalWindowEvaluator != null && 
-        							  oldClassifier.ConceptLearner.internalWindowEvaluator.containsIndex(this.indexOriginal) )
+        							  oldClassifier.ConceptLearner.internalWindowEvaluator.containsIndex(this.indexOriginal))
         						  ((DynamicWindowClassificationPerformanceEvaluator) 
         								  oldClassifier.ConceptLearner.internalWindowEvaluator).deleteModel(this.indexOriginal);
         				  }
@@ -495,20 +915,19 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
         			  // 2.3 Inherit window properties / clear internal evaluator
         			  this.windowProperties = this.bkgLearner.windowProperties; // internalEvaluator shouldnt be inherited
         			  this.internalWindowEvaluator = null; // only a double check, as it should be always null (only used in background + old concept Learners)
-
         		   }
 	            // 2.3 New active classifier is the best retrieved old classifier / clear background learner
                 this.classifier = this.bkgLearner.classifier;
-                this.driftDetectionMethod = this.bkgLearner.driftDetectionMethod;
-                this.warningDetectionMethod = this.bkgLearner.warningDetectionMethod;                
+                // this.driftDetectionMethod = this.bkgLearner.driftDetectionMethod;
+                // this.warningDetectionMethod = this.bkgLearner.warningDetectionMethod;                
                 this.evaluator = this.bkgLearner.evaluator;
-                this.createdOn = this.bkgLearner.createdOn;
+                this.createdOn = this.bkgLearner.createdOn;		// createdOn = instancesSeen
                 this.bkgLearner = null; 
         		} 
             else { 
                 this.classifier.resetLearning();
                 this.createdOn = instancesSeen;
-                this.driftDetectionMethod = ((ChangeDetector) getPreparedClassOption(this.driftOption)).copy();
+                // this.driftDetectionMethod = ((ChangeDetector) getPreparedClassOption(this.driftOption)).copy(); // todo: check (move it somewhere, or not needed anymore?)
             }
             this.evaluator.reset();
         }
@@ -528,96 +947,11 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
     			// TODO: this may need to be a method inside GNG instead
         		return (ArrayList<GUnit>) null;
         }
-        
-		/** Batch method */
-        public GNG UpdateTopologyAlgorithm(GNG newTopology2, ArrayList<Instance> w2){
-    			// TODO
-			return newTopology2;  // if topology (Pc) is global, then we don´t need to return this here
-        }
-        
-        /** Incremental method */
-		private void UpdateTopologyAlgorithm(GNG topology2, Instance instance) {
-			// TODO Auto-generated method stub
-		}
 
         public void trainOnInstance(Instance instance, long instancesSeen) { //	Line 5: (x,y) ← next(S)
-            this.classifier.trainOnInstance(instance);    // Line 6: ClassifierTrain(c, x, y) -> Train c on the current instance (x, y).        
-            
-            // Set false alarms in case of drift at false as default
-            boolean falseAlarm = false; // Included for cases where driftDecisionMechanism > 0 and recurring drifts are enabled.
-            
-            // Should it use a drift detector? Also, is it a backgroundLearner? If so, then do not "incept" another one. 
-            if(this.useDriftDetector && !this.isBackgroundLearner) {
-                boolean correctlyClassifies = this.classifier.correctlyClassifies(instance);
-                // Check for warning only if useBkgLearner is active
-                if(this.useBkgLearner) { 
-                    /*********** warning detection ***********/
-                    // Update the WARNING detection method
-                    this.warningDetectionMethod.input(correctlyClassifies ? 0 : 1);
-                    
-                    // TODO (confirm the next lines 7-15)
-                    if (W.size() > warningWindowSizeThreshold) W.clear();	 // Lines 7-9:  False Alarm (Case 2)					
-                    if (W.size() > 1 && W.size() < this.warningWindowSizeThreshold) { // Lines 10-15 if (size(W) 𝝐 (𝟏, 𝝁)) ->In warning window
-                    			if(this.bkgLearner != null) this.bkgLearner.classifier.trainOnInstance(instance);		// Line 11: Train the background classifier
-                    		W.add(instance);
-                    }
-                    else UpdateTopologyAlgorithm(topology, instance);  // Line 15:  Update centroids / prototypes.
-                    
-                    // Check if there was a change – in case of false alarm this triggers warning again and the bkglearner gets replaced
-                    if(this.warningDetectionMethod.getChange()) {  // line 16: warning detected?
-                        raiseWarning(instancesSeen);
-                        W.add(instance);	// TODO: here? (confirm) line 20
-                    } 
-                    
-                } /*********** drift detection ***********/
-                // Update the DRIFT detection method
-                this.driftDetectionMethod.input(correctlyClassifies ? 0 : 1);
-                // Check if there was a change
-                if(this.driftDetectionMethod.getChange()) {  // line 22 drift detected?                		
-                    raiseDrift(instancesSeen, falseAlarm);
-                } 
-                
-            } if (eventsLogFile != null && logLevel >= 2) logEvent(getTrainExampleEvent()); // Register training example in log
+            this.classifier.trainOnInstance(instance);    // Line 6: ClassifierTrain(c, x, y) -> Train c on the current instance (x, y).     
         }
 
-		private void raiseWarning(long instancesSeen) {
-			this.lastWarningOn = instancesSeen;
-			this.numberOfWarningsDetected++;
-
-			// 1 Update last error and make a backup of the current classifier in a concept object (the active one will be in use until the Drift is confirmed). 
-			// As there is no false alarms explicit mechanism (bkgLeaners keep running till replaced), this has been moved here.
-			if(this.useRecurringLearner) saveCurrentConcept();  // line 17: Save a tmp copy of c as snapshot
-			   
-			// 2 Start warning window to create bkg learner and retrieve old classifiers (if option enabled)
-			startWarningWindow();  // lines 18-19
-		} 
-		
-		/**
-		 * Aux method to select the next concept classifier and topology when a drift is raised
-		 * Pselected is:
-			a new P (Pn) in case of bkgDrift;
-			Pc in case of false alarm; 
-			and Ph in case of recurring drift.
-		 * */
-		private void raiseDrift(long instancesSeen, boolean falseAlarm) {
-			this.lastDriftOn = instancesSeen;
-			this.numberOfDriftsDetected++;
-			//toLog = false;
-						
-      		// 1 Compare DT results using Window method and pick the best one between concept history and bkg classifier.
-      		// It returns the best classifier in the object of the bkgLearner
-			//  if there is not another base classifier with lower error than active classifier (and driftDecisionMechanism > 0), then a false alarm is raised
-			if (this.useRecurringLearner) falseAlarm = selectNextActiveClassifier();  // line 32:  c = FindClassifier(c, b, GH) -> Assign best transition to next state
-			else if (eventsLogFile != null && logLevel >= 1 ) logEvent(getBkgDriftEvent()); 
-			      
-			// 2 Transition to new classifier (only if there is no false alarms)
-			if (!falseAlarm) this.reset();
-			// asuarez. 25 sept 2018
-			// IMPORTANT. False alarms avoid drifts, but they do not disable a certain warning on a base classifier. // any TODO here??
-			// In cases of a false alarm, the active classifiers will still have an active warning.
-			
-		}
-		
         /**
          * This method receives the current list of training examples received during the warning window and checks what's the closest group.
          * */
@@ -625,80 +959,9 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 			// TODO:
 			return -1;
 		}
-
-		// Saves a backup of the active classifier that raised a warning to be stored in the concept history in case of drift.
-        public void saveCurrentConcept() {  
-        		// if(ConceptHistory.historyList != null) // System.out.println("CONCEPT HISTORY SIZE IS: "+ConceptHistory.historyList.size());
-        	
-        		// 1 Update last error before warning of the active classifier
-        		// This error is the total fraction of examples incorrectly classified since this classifier was active until now.
-    			this.lastError = this.evaluator.getFractionIncorrectlyClassified();
-    			
-    			// 2 Copy Base learner for Concept History in case of Drift and store it on temporal object.
-    			// First, the internal evaluator will be null. 
-    			// It doesn't get initialized till once in the Concept History and the first warning arises. See it in startWarningWindow
-    			EPCHBaseLearner tmpConcept = new EPCHBaseLearner(this.indexOriginal, 
-    					this.classifier.copy(), (BasicClassificationPerformanceEvaluator) this.evaluator.copy(), 
-    					this.createdOn, this.useBkgLearner, this.useDriftDetector, this.driftDecisionMechanism, this.driftOption, this.warningOption, 
-    					true, this.useRecurringLearner, true, this.windowProperties.copy(), null, eventsLogFile, logLevel, 
-    					this.warningWindowSizeThreshold, this.topology);
-
-    			this.tmpCopyOfClassifier = new Concept(tmpConcept, 
-	    				this.createdOn, this.evaluator.getPerformanceMeasurements()[0].getValue(), this.lastWarningOn);
-	    		
-	    		// 3 Add the classifier accumulated error (from the start of the classifier) from the iteration before the warning
-	    		this.tmpCopyOfClassifier.setErrorBeforeWarning(this.lastError);
-	    		// A simple concept to be stored in the concept history that doesn't have a running learner.
-	    		// This doesn't train. It keeps the classifier as it was at the beginning of the training window to be stored in case of drift.
-        }
-                
-        // Starts Warning window
-        public void startWarningWindow() {
-        		// 0 Reset warning window
-            	this.bkgLearner = null; 
-    	        if(useRecurringLearner) {    	        	
-	    	        	this.internalWindowEvaluator = null;
-	    	        
-	    	        // 1 Updating objects with warning. Turns on windows flag in Concept History.
-	            // Also, if the concept history is ready and it contains old classifiers, add prior estimation and window size to each concepts history learner
-	        		ConceptHistory.classifiersOnWarning.put(this.indexOriginal, true);
-	            if(ConceptHistory.historyList != null && ConceptHistory.historyList.size() > 0) {
-			        	for (Concept oldClassifier : ConceptHistory.historyList.values()) {
-			        		// If the concept internal evaluator has been initialized for any other classifier on warning, add window size and last error of current classifier on warning 
-			        		if (oldClassifier.ConceptLearner.internalWindowEvaluator != null) {
-			        			//// System.out.println("ADDING VALUES TO INTERNAL EVALUATOR OF CONCEPT "+oldClassifier.historyIndex+" IN POS "+this.indexOriginal);
-				        		((DynamicWindowClassificationPerformanceEvaluator) 
-				        			oldClassifier.ConceptLearner.internalWindowEvaluator).addModel(this.indexOriginal,this.lastError,this.windowProperties.windowSize);
-			        		} 
-			        		// Otherwise, initialize a new internal evaluator for the concept
-			        		else {
-			        			//// System.out.println("INSTANCIATING FOR THE FIRST TIME INTERNAL EVALUATOR FOR CONCEPT "+oldClassifier.historyIndex+" IN POS "+this.indexOriginal);
-		           			DynamicWindowClassificationPerformanceEvaluator tmpInternalWindow = new DynamicWindowClassificationPerformanceEvaluator(
-		           				this.windowProperties.getSize(), this.windowProperties.getIncrements(), this.windowProperties.getMinSize(),
-		                			this.lastError, this.windowProperties.getDecisionThreshold(),
-		                			this.windowProperties.getDynamicWindowInOldClassifiersFlag(), this.windowProperties.getResizingPolicy(),
-		                			this.indexOriginal, "created for old-retrieved classifier in ensembleIndex #"+this.indexOriginal);  	
-		           			tmpInternalWindow.reset(); 
-		           			
-		           			oldClassifier.ConceptLearner.internalWindowEvaluator = tmpInternalWindow;
-			        		}
-			        	}
-	            } 
-    	        } 
-	        	// Log warning     
-    	        if (eventsLogFile != null && logLevel >= 1 ) logEvent(getWarningEvent());
-
-            // 2 Create background Classifier
-            createBkgClassifier();	// line 18: create background classifier
-            W.clear();	 // line 19: (TODO: correct?) 
-            
-            // Update the warning detection object for the current object 
-            // (this effectively resets changes made to the object while it was still a bkg learner). 
-            this.warningDetectionMethod = ((ChangeDetector) getPreparedClassOption(this.warningOption)).copy();
-        }
         
         // Creates BKG Classifier in warning window
-        public void createBkgClassifier() {
+        public void createBkgClassifier(int lastWarningOn) { // now lastWarningon received as parameter, so it can be passed from an upper level
         		// Empty explicitely the BKG internal evaluator if enabled
         		//if (this.bkgLearner != null) this.bkgLearner.internalWindowEvaluator.clear(); // I don't see any improvement
         	
@@ -724,310 +987,54 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
             // // System.out.println("------------------------------");
             
             // 4 Create a new bkgLearner object
-            this.bkgLearner = new EPCHBaseLearner(indexOriginal, bkgClassifier, bkgEvaluator, this.lastWarningOn, 
-            		this.useBkgLearner, this.useDriftDetector, this.driftDecisionMechanism, this.driftOption, this.warningOption, true, this.useRecurringLearner, false, 
-            									   this.windowProperties, bkgInternalWindowEvaluator, eventsLogFile, logLevel, 
-            									   this.warningWindowSizeThreshold, this.topology); // added last inputs parameter by @suarezcetrulo        	
-        }
-        
-        /** 
-         *  This method ranks all applicable base classifiers in the Concept History (CH)
-         *  It also selects the next classifier to be active, or it raises a false alarm if the drift should be reconsidered.
-         * 
-		 *  -----------------------------------------------------------------------------------------------------------------
-         *  False alarms depend on the drift decision mechanism
-		 *  -----------------------------------------------------------------------------------------------------------------
-		 *  
-		 * 	When driftDecisionMechanism == 0, if bkgLearner == null, false alarms cannot be raised. A comparison against CH is not possible as there is no bkg learner trained.
-	     *	 In this case, a drift signal has been raised and it cannot be stopped without false alarms. A bkg drift applies as only option available.
-		 *  
-         * 	When drift decision mechanism == 1 or 2, then false alarms are taken into consideration for drifts (the warning will be still active even if a false alarm is raised for a drift in the same active classifier).
-	    	 *	If the background learner is NULL, we consider that the drift signal may have been caused by a too sensitive drift detection parameterization.
-	    	 *	In this case, it's clearly too soon to change the active classifier. Therefore we raise a drift signal. 
-	     *		
-	     *	When drift decision mechanism == 2, we also raise a false alarm when the active classifier obtains less error than the bkg classifier and all of the classifiers from the CH.
-	     *		
-	     *  -----------------------------------------------------------------------------------------------------------------
-		 *	If the active classifier is not the best available choice / false alarm is raised, the following logic applies:
-		 *  -----------------------------------------------------------------------------------------------------------------
-		 *  If bkgBetterThanCHbaseClassifier == False, the minimum error of the base classifiers in the CH is not lower than the error of the bkg classifier. 
-		 *   Then, register background drift.
-		 *   
-		 *	If CHranking.size() == 0, no applicable concepts for the active classifier in the concept history. Then, we register background drift.
-	    	 *	Otherwise, a recurring drift is the best option. 
-         * @param historyGroup 
-	    	 *			    		 
-         * */
-        public boolean selectNextActiveClassifier() {
-        		// TODO: confirm use the input parameter 'historyGroup', that refers to the most similar group of classifiers in the Concept History
-        		
-			// Start retrieval from CH 
-			int historyGroup = findGroup(W); // line 31: Group for retrieval of next state (TODO)
-			
-	    		// 1 Raise a false alarm for the drift if the background learner is not ready
-	    		if (this.driftDecisionMechanism > 0 && this.bkgLearner == null) return registerDriftFalseAlarm();
-	        	
-	    		// 2 Retrieve best applicable classifier from Concept History
-        		int indexOfBestRanked = -1;
-        		double errorOfBestRanked = -1.0;
-        		HashMap<Integer, Double> ranking = rankConceptHistoryClassifiers(historyGroup);
-	    		if (ranking.size() > 0) {
-	    			indexOfBestRanked = getMinKey(ranking); // find index of concept with lowest value (error)
-	    			errorOfBestRanked = Collections.min(ranking.values());
-	    		}
-        		
-	    		// 3 Compare this against the background classifier and make the decision.
-	    		if (this.driftDecisionMechanism == 2) {
-    				if (activeBetterThanBKGbaseClassifier()) { 
-    					if (ranking.size() >0 && !activeBetterThanCHbaseClassifier(errorOfBestRanked))
-		    	    				 registerRecurringDrift(indexOfBestRanked, historyGroup); 
-    						// false alarm if active classifier is still the best one and when there are no applicable concepts.
-		    				else return registerDriftFalseAlarm(); 
-    				} else { 
-    			    		if(ranking.size() > 0 && bkgBetterThanCHbaseClassifier(errorOfBestRanked)) 
-    			    			registerRecurringDrift(indexOfBestRanked, historyGroup);
-    			    		else registerBkgDrift (); 					
-    				}
-    				
-    			// Drift decision mechanism == 0 or 1 (in an edge case where the bkgclassifier is still NULL, we ignore the comparisons)
-	    		} else {
-	    			if(ranking.size() > 0 && this.bkgLearner != null && bkgBetterThanCHbaseClassifier(errorOfBestRanked)) 
-	    				registerRecurringDrift (indexOfBestRanked, historyGroup);
-			    	else registerBkgDrift ();
-	    		} 
-	    		
-	    		return false; // No false alarms raised at this point
+            this.bkgLearner = new EPCHBaseLearner(indexOriginal, bkgClassifier, bkgEvaluator, 
+            				lastWarningOn, // this.lastWarningOn replaced with 'instancesSeen'
+            				this.useBkgLearner, this.useDriftDetector, // this.driftDecisionMechanism, 
+            				true, this.useRecurringLearner, 
+            				false, this.windowProperties, bkgInternalWindowEvaluator, // eventsLogFile, logLevel, 
+            				this.warningWindowSizeThreshold, new GNG()); // new topology for bkg classifier     	
         }
 
-        // this.indexOriginal - pos of this classifier with active warning in ensemble
-        public HashMap<Integer, Double> rankConceptHistoryClassifiers (int historyGroup) {
-	    		HashMap<Integer, Double> CHranking = new HashMap<Integer, Double>();
-	    		// Concept History owns only one learner per historic concept. But each learner saves all classifier's independent window size and priorEstimation in a HashMap.
-	    		// for (Concept auxConcept : ConceptHistory.historyList[historyGroup].values()) 
-	    		for (Concept auxConcept : ConceptHistory.historyList.values()) // TODO: replace with the line above
-	    			// Only take into consideration Concepts sent to the Concept History after the current classifier raised a warning (see this consideration in reset*) 
-	    			if (auxConcept.ConceptLearner.internalWindowEvaluator != null && 
-	    					auxConcept.ConceptLearner.internalWindowEvaluator.containsIndex(this.indexOriginal)) { // checking indexOriginal to verify that it's an applicable concept
-		    			CHranking.put(auxConcept.getHistoryIndex(), ((DynamicWindowClassificationPerformanceEvaluator) 
-		    					auxConcept.ConceptLearner.internalWindowEvaluator).getFractionIncorrectlyClassified(this.indexOriginal)); // indexOriginal refers to the classifier we compare against. it should be an applicable concept.
-	    			}
-	    		
-	    		return CHranking;
-        }
-        
-        // Aux method for getting the best classifier in a hashMap of (int classifierIndex, double averageErrorInWindow) 
-        private Integer getMinKey(Map<Integer, Double> map) {
-        	    Integer minKey = null;
-        	    // System.out.println("map is: "+map+" number of keys is: "+map.keySet().size()); // TODO. debugging
-            double minValue = Double.MAX_VALUE;
-            for(Integer key : map.keySet()) {
-            		// System.out.println("Key is:"+key+" with value: "+map.get(key));
-                 double value = map.get(key);
-                 if(value < minValue) {
-                	   // System.out.println("Min error is: "+ value+" with key: "+key);
-                    minValue = value;
-                    minKey = key;
-                }
-            } return minKey;
-        }
-        
-        // this.indexOriginal - pos of this classifier with active warning in ensemble
-        public boolean activeBetterThanBKGbaseClassifier() { 
-	        	// TODO? We may need to do use an internal evaluator for the active learner when driftDecisionMechanism==2. 
-	        	//		 But the resizing mechanism may need to be different, or compare to the bkg learner.
-	        	/* return (((DynamicWindowClassificationPerformanceEvaluator) this.internalWindowEvaluator)
-	        				.getFractionIncorrectlyClassified(this.indexOriginal) <= 
-	        			((DynamicWindowClassificationPerformanceEvaluator) this.bkgLearner.internalWindowEvaluator)
-	        				.getFractionIncorrectlyClassified(this.bkgLearner.indexOriginal));*/
-        	
-	        return (( this.evaluator.getFractionIncorrectlyClassified() <= 
-	        			((DynamicWindowClassificationPerformanceEvaluator) this.bkgLearner.internalWindowEvaluator)
-	        			.getFractionIncorrectlyClassified(this.bkgLearner.indexOriginal))); 
-	        // this.bkgLearner.indexOriginal == this.indexOriginal, as it is created for that same ensemble pos.  
-        }
-        
-        // this.indexOriginal - pos of this classifier with active warning in ensemble
-		public boolean activeBetterThanCHbaseClassifier(double bestFromCH) {			
-	        	// TODO? We may need to do use an internal evaluator for the active learner when driftDecisionMechanism==2. 
-	        	//		 But the resizing mechanism may need to be different, or compare to the bkg learner.
-	        	/* return (((DynamicWindowClassificationPerformanceEvaluator) this.internalWindowEvaluator)
-						.getFractionIncorrectlyClassified(this.indexOriginal) <= bestFromCH);*/
-			
-			return (this.evaluator.getFractionIncorrectlyClassified() <= bestFromCH);
-		}
-
-		// this.bkgLearner.indexOriginal - pos of bkg classifier if it becomes active in the ensemble
-		public boolean bkgBetterThanCHbaseClassifier(double bestFromCH) {
-			return (bestFromCH <= ((DynamicWindowClassificationPerformanceEvaluator) this.bkgLearner.internalWindowEvaluator)
-					.getFractionIncorrectlyClassified(this.bkgLearner.indexOriginal));
-	        // this.bkgLearner.indexOriginal == this.indexOriginal, as it is created for that same ensemble pos.  
-		}
-
-        public boolean registerDriftFalseAlarm () {
-			// Register false alarm.
-			if (this.eventsLogFile != null && this.logLevel >= 0 ) logEvent(getFalseAlarmEvent());	
-			this.newTopology = null;  // then Pn = Pc  // TODO: confirm
-			// this.newPrototypes = getPrototypes(newTopology);  // line 33   (TODO: confirm that this is not necessary)
-			
-			// Update false alarm (the active classifier will remain being the same)
-			return true;
-        }
-        
-        public void registerRecurringDrift (Integer indexOfBestRanked, int historyGroup) {
-			// Register recurring drift
-			if (this.eventsLogFile != null && this.logLevel >= 0 ) logEvent(getRecurringDriftEvent(indexOfBestRanked));	
-			
-			// Extracts best recurring learner from concept history. It no longer exists in the concept history
-			this.bkgLearner = ConceptHistory.extractConcept(indexOfBestRanked);  // TODO: replace with the row below
-            // this.bkgLearner = ConceptHistory.extractConcept(historyGroup, indexOfBestRanked); // TODO: this should come from a Group
-            // this.newTopology = ConceptHistory.getGroupTopology(historyGroup); // TODO:
-			// this.newPrototypes = getPrototypes(newTopology);  // line 33   (TODO: confirm that this is not necessary)
-        }
-        
-        public void registerBkgDrift () {
-			// Register background drift
-			if (this.eventsLogFile != null && this.logLevel >= 0 ) logEvent(getBkgDriftEvent());
-			// this.newTopology = new GNG();		// TODO
-			// newTopology.train(W);				// TODO
-			// this.newPrototypes = getPrototypes(newTopology);  // line 33   (TODO: confirm that this is not necessary)
-        }
-        // ////////////////
-        
-        
-        
         public double[] getVotesForInstance(Instance instance) {
             DoubleVector vote = new DoubleVector(this.classifier.getVotesForInstance(instance));
             return vote.getArrayRef();
         }
         
-        // Auxiliar methods for logging events
-           
-        public Event getTrainExampleEvent() {
-        		String [] eventLog = {
-		        String.valueOf(instancesSeen), "Train example", String.valueOf(this.indexOriginal), 
-				String.valueOf(this.evaluator.getPerformanceMeasurements()[1].getValue()), 
-				this.warningOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""), 
-				this.driftOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""), 
-				String.valueOf(this.createdOn), String.valueOf(this.evaluator.getFractionIncorrectlyClassified()), 
-				String.valueOf(this.useRecurringLearner ? ConceptHistory.classifiersOnWarning.size() : "N/A"),
-				String.valueOf(this.useRecurringLearner ? ConceptHistory.getNumberOfActiveWarnings() : "N/A"),
-				String.valueOf(this.useRecurringLearner ? ConceptHistory.classifiersOnWarning : "N/A"), "N/A", "N/A", "N/A"};
+    		// Saves a backup of the active classifier that raised a warning to be stored in the concept history in case of drift.
+        public void saveCurrentConcept(long instancesSeen) {  // now instancesSeen is passed by parameter
+        		// if(ConceptHistory.historyList != null) // System.out.println("CONCEPT HISTORY SIZE IS: "+ConceptHistory.historyList.size());
+        	
+        		// 1 Update last error before warning of the active classifier
+        		// This error is the total fraction of examples incorrectly classified since this classifier was active until now.
+    			this.lastError = this.evaluator.getFractionIncorrectlyClassified();
+    			
+    			// 2 Copy Base learner for Concept History in case of Drift and store it on temporal object.
+    			// First, the internal evaluator will be null. 
+    			// It doesn't get initialized till once in the Concept History and the first warning arises. See it in startWarningWindow
+    			EPCHBaseLearner tmpConcept = new EPCHBaseLearner(this.indexOriginal, 
+    					this.classifier.copy(), (BasicClassificationPerformanceEvaluator) this.evaluator.copy(), 
+    					this.createdOn, this.useBkgLearner, this.useDriftDetector, // this.driftDecisionMechanism, 
+    					// this.driftOption, this.warningOption, 
+    					true, useRecurringLearner, true, this.windowProperties.copy(), null, // eventsLogFile, logLevel, 
+    					this.warningWindowSizeThreshold, this.topology);
+    			// TODO: Save concept in a group
+
+    			// TODO: copy of classifier should be in the actual classifier.
+    			this.tmpCopyOfClassifier = new Concept(tmpConcept, 
+        				this.createdOn, this.evaluator.getPerformanceMeasurements()[0].getValue(), instancesSeen);
         		
-        		return (new Event(eventLog));
+        		// 3 Add the classifier accumulated error (from the start of the classifier) from the iteration before the warning
+        		this.tmpCopyOfClassifier.setErrorBeforeWarning(this.lastError);
+        		// A simple concept to be stored in the concept history that doesn't have a running learner.
+        		// This doesn't train. It keeps the classifier as it was at the beginning of the training window to be stored in case of drift.
         }
-           
-        public Event getWarningEvent() {
-        	
-            // System.out.println();
-            // System.out.println("-------------------------------------------------");
-            // System.out.println("WARNING ON IN MODEL #"+this.indexOriginal+". Warning flag status (activeClassifierPos, Flag): "+ConceptHistory.classifiersOnWarning);
-            // System.out.println("CONCEPT HISTORY STATE AND APPLICABLE FROM THIS WARNING IS: "+ConceptHistory.historyList.keySet().toString());
-            // System.out.println("-------------------------------------------------");
-            // System.out.println();
-        	
-        		String [] warningLog = {
-    				String.valueOf(this.lastWarningOn), "WARNING-START", // event
-    				String.valueOf(this.indexOriginal), String.valueOf(this.evaluator.getPerformanceMeasurements()[1].getValue()), 
-    				this.warningOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""),
-    				this.driftOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""), 
-    				String.valueOf(this.createdOn), String.valueOf(this.evaluator.getFractionIncorrectlyClassified()), 
-    				String.valueOf(this.useRecurringLearner ? ConceptHistory.classifiersOnWarning.size() : "N/A"),
-    				String.valueOf(this.useRecurringLearner ? ConceptHistory.getNumberOfActiveWarnings() : "N/A"),
-    				String.valueOf(this.useRecurringLearner ? ConceptHistory.classifiersOnWarning : "N/A"), 
-    				this.useRecurringLearner ? ConceptHistory.historyList.keySet().toString() : "N/A", "N/A", "N/A"};
-        		//1279,1,WARNING-START,0.74,{F,T,F;F;F;F},...
-
-        		return (new Event(warningLog));
-        }
-        
-        public Event getBkgDriftEvent() {
-        	
-            // System.out.println("DRIFT RESET IN MODEL #"+this.indexOriginal+" TO NEW BKG MODEL #"+this.bkgLearner.indexOriginal); 
-
-	    		String [] eventLog = {String.valueOf(this.lastDriftOn), "DRIFT TO BKG MODEL", String.valueOf(this.indexOriginal), 
-						String.valueOf(this.evaluator.getPerformanceMeasurements()[1].getValue()), 
-						this.warningOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""), 
-						this.driftOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""),
-						String.valueOf(this.createdOn), String.valueOf(this.evaluator.getFractionIncorrectlyClassified()), 
-						String.valueOf(this.useRecurringLearner ? ConceptHistory.classifiersOnWarning.size() : "N/A"), 
-						String.valueOf(this.useRecurringLearner ? ConceptHistory.getNumberOfActiveWarnings() : "N/A"), 
-						String.valueOf(this.useRecurringLearner ? ConceptHistory.classifiersOnWarning : "N/A"), 
-						"N/A", "N/A", "N/A"};    
-				    		
-        		return (new Event(eventLog));
-	    }
-        
-        public Event getRecurringDriftEvent(Integer indexOfBestRankedInCH) {
-	    		
-	    		//// System.out.println(indexOfBestRankedInCH); // TODO: debugging
-        	        	
-            // System.out.println("RECURRING DRIFT RESET IN POSITION #"+this.indexOriginal+" TO MODEL #"+ConceptHistory.historyList.get(indexOfBestRankedInCH).ensembleIndex); //+this.bkgLearner.indexOriginal);   
-
-        		String [] eventLog = {
-    		        String.valueOf(this.lastDriftOn), "RECURRING DRIFT", String.valueOf(this.indexOriginal), 
-		    		String.valueOf(this.evaluator.getPerformanceMeasurements()[1].getValue()), 
-		    		this.warningOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""), 
-		    		this.driftOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""), 
-		    		String.valueOf(this.createdOn), String.valueOf(this.evaluator.getFractionIncorrectlyClassified()), 
-		    		String.valueOf(this.useRecurringLearner ? ConceptHistory.classifiersOnWarning.size() : "N/A"),
-		    		String.valueOf(this.useRecurringLearner ? ConceptHistory.getNumberOfActiveWarnings() : "N/A"), 
-		    		String.valueOf(this.useRecurringLearner ? ConceptHistory.classifiersOnWarning : "N/A"), "N/A",
-		    		String.valueOf(ConceptHistory.historyList.get(indexOfBestRankedInCH).ensembleIndex),
-		    		String.valueOf(ConceptHistory.historyList.get(indexOfBestRankedInCH).createdOn)
-        		};    
-	    		
-        		return (new Event(eventLog));
-        }
-                
-        public Event getFalseAlarmEvent() {
-        	
-            // System.out.println("DRIFT RESET IN MODEL #"+this.indexOriginal+" TO NEW BKG MODEL #"+this.bkgLearner.indexOriginal); 
-
-	    		String [] eventLog = {String.valueOf(this.lastDriftOn), "FALSE ALARM ON DRIFT SIGNAL", String.valueOf(this.indexOriginal), 
-						String.valueOf(this.evaluator.getPerformanceMeasurements()[1].getValue()), 
-						this.warningOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""), 
-						this.driftOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""),
-						String.valueOf(this.createdOn), String.valueOf(this.evaluator.getFractionIncorrectlyClassified()), 
-						String.valueOf(this.useRecurringLearner ? ConceptHistory.classifiersOnWarning.size() : "N/A"), 
-						String.valueOf(this.useRecurringLearner ? ConceptHistory.getNumberOfActiveWarnings() : "N/A"), 
-						String.valueOf(this.useRecurringLearner ? ConceptHistory.classifiersOnWarning : "N/A"), 
-						"N/A", "N/A", "N/A"};
-				    		
-        		return (new Event(eventLog));
-	    }
-        
-		
+       	
     }
-      
-    /***
-     * Inner class to assist with the multi-thread execution. 
+        
+    /*** 
+     * Static and concurrent for all DTs that run in parallel
+     * Concept_history = (list of concept_representations)
      */
-    protected class TrainingRunnable implements Runnable, Callable<Integer> {
-        final private EPCHBaseLearner learner;
-        final private Instance instance;
-        final private long instancesSeen;
-
-        public TrainingRunnable(EPCHBaseLearner learner, Instance instance, long instancesSeen) {
-            this.learner = learner;
-            this.instance = instance;
-            this.instancesSeen = instancesSeen;
-        }
-
-        @Override
-        public void run() {
-            learner.trainOnInstance(this.instance, this.instancesSeen); // TODO. add the events log file here
-        }
-
-        @Override
-        public Integer call() throws Exception {
-            run();
-            return 0;
-        }
-    }
-    
-    
-    //Concept_history = (list of concept_representations)
-    // Static and concurrent for all DTs that run in parallel
     public static class ConceptHistory {
 
     		// Concurrent Concept History List
@@ -1037,11 +1044,16 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
     		// List of ensembles with an active warning used as to determine if the history list evaluators should be in use
     		public static ConcurrentHashMap<Integer,Boolean> classifiersOnWarning; // = new ConcurrentHashMap<Integer,Boolean> ();
 
-	    public static EPCHBaseLearner extractConcept(int key) {
+	    /*public static EPCHBaseLearner extractConcept(int key) {	// now the concepts are copied and not extracted
 	    		EPCHBaseLearner aux = historyList.get(key).getBaseLearner();
 	    		historyList.remove(key);
 			return aux;
-	    }
+	    }*/
+	    
+	    public static EPCHBaseLearner copyConcept(int key) {
+	    		EPCHBaseLearner aux = historyList.get(key).getBaseLearner();
+		return aux;
+    }
 	    
 	    public static int getNumberOfActiveWarnings() {
 	    		int count = 0;
