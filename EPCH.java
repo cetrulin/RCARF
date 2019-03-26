@@ -281,11 +281,10 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
     public void trainOnInstance(int ensemblePos, Instance instance, long instancesSeen) {
 	    	this.ensemble[ensemblePos].trainOnInstance(instance, instancesSeen); // Line 6: ClassifierTrain(c, x, y) -> Train c on the current instance (x, y).     
 	    
-	    // Set false alarms in case of drift at false as default
-	    boolean falseAlarm = false; // Included for cases where driftDecisionMechanism > 0 and recurring drifts are enabled.
-	    
 	    // Should it use a drift detector? Also, is it a backgroundLearner? If so, then do not "incept" another one. 
-	    if(!this.disableDriftDetectionOption.isSet() && !this.isBackgroundLearner) { // la segunda condicion de esta linea la iba a poner como !this.ensemble[ensemblePos].isBackgroundLearner
+	    	// TODO: creo que la segunda condicion no tiene nada de sentido. aqui no deberian entrar los backgrounds. comprobar que no es necesaria eliminarla
+	    	// TODO: comprobar que en caso de eliminar esto, seguimos haciendo sobre los background trees todo lo necesario.
+	    if(!this.disableDriftDetectionOption.isSet() && !this.ensemble[ensemblePos].isBackgroundLearner) { 
 	    		// todo dentro de aqui es para el classifier ppal.	// pero no tiene para nada buena pinta, porque cuando llegamos entonces a los bkg learners?
 	    															// TODO. pensar en si esto esta bien. madurar la idea y proponer forma alternativa si no.
 	        boolean correctlyClassifies = this.ensemble[ensemblePos].correctlyClassifies(instance);
@@ -315,52 +314,59 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 	        // Update the DRIFT detection method
 	        this.driftDetectionMethod.input(correctlyClassifies ? 0 : 1);
 	        // Check if there was a change
-	        if(this.driftDetectionMethod.getChange()) {  // line 22 drift detected?                		
-	            raiseDrift(ensemblePos, instancesSeen, falseAlarm);
-	        } 
-	        
-	    } if (this.eventsLogFile != null && logLevelOption.getValue() >= 2) logEvent(getTrainExampleEvent()); // Register training example in log
+			if(this.driftDetectionMethod.getChange()) {  // line 22 drift detected?                		
+				raiseDrift(ensemblePos, instancesSeen, this.eventsLogFile, this.logLevelOption.getValue());
+			}
+			        
+	    } if (this.eventsLogFile != null && logLevelOption.getValue() >= 2) logEvent(getTrainExampleEvent(ensemblePos)); // Register training example in log
 
     }
     	    
 	// Starts Warning window
-	public void startWarningWindow() {
+	public void startWarningWindow(int ensemblePos) {
 		// 0 Reset warning window
-		this.bkgLearner = null;   // not 'this', the base classifier. but now warnings are at ensemble level. how do we handle this?
+		this.ensemble[ensemblePos].bkgLearner = null;   // not 'this', the base classifier. but now warnings are at ensemble level. how do we handle this?
 	    if(! disableRecurringDriftDetectionOption.isSet()) {    	        	
-	        	this.internalWindowEvaluator = null;
-	        
-	    // 1 Updating objects with warning. Turns on windows flag in Concept History.
-	    // Also, if the concept history is ready and it contains old classifiers, add prior estimation and window size to each concepts history learner
-		ConceptHistory.classifiersOnWarning.put(this.indexOriginal, true);
-	    if(ConceptHistory.historyList != null && ConceptHistory.historyList.size() > 0) {
-	        	for (Concept oldClassifier : ConceptHistory.historyList.values()) {
-	        		// If the concept internal evaluator has been initialized for any other classifier on warning, add window size and last error of current classifier on warning 
-	        		if (oldClassifier.ConceptLearner.internalWindowEvaluator != null) {
-	        			//// System.out.println("ADDING VALUES TO INTERNAL EVALUATOR OF CONCEPT "+oldClassifier.historyIndex+" IN POS "+this.indexOriginal);
-		        		((DynamicWindowClassificationPerformanceEvaluator) 
-		        			oldClassifier.ConceptLearner.internalWindowEvaluator).addModel(this.indexOriginal,this.lastError,this.windowProperties.windowSize);
-	        		} 
-	        		// Otherwise, initialize a new internal evaluator for the concept
-	        		else {
-	        			//// System.out.println("INSTANCIATING FOR THE FIRST TIME INTERNAL EVALUATOR FOR CONCEPT "+oldClassifier.historyIndex+" IN POS "+this.indexOriginal);
-	       			DynamicWindowClassificationPerformanceEvaluator tmpInternalWindow = new DynamicWindowClassificationPerformanceEvaluator(
-	       				this.windowProperties.getSize(), this.windowProperties.getIncrements(), this.windowProperties.getMinSize(),
-	            			this.lastError, this.windowProperties.getDecisionThreshold(),
-	            			this.windowProperties.getDynamicWindowInOldClassifiersFlag(), this.windowProperties.getResizingPolicy(),
-	            			this.indexOriginal, "created for old-retrieved classifier in ensembleIndex #"+this.indexOriginal);  	
-	       			tmpInternalWindow.reset(); 
-	       			
-	       			oldClassifier.ConceptLearner.internalWindowEvaluator = tmpInternalWindow;
-	        		}
-	        	}
-	    } 
-	    } 
-		// Log warning     
-	    if (eventsLogFile != null && logLevelOption.getValue() >= 1 ) logEvent(getWarningEvent());
-	
+	        	this.ensemble[ensemblePos].internalWindowEvaluator = null;
+		        
+		    // 1 Updating objects with warning. Turns on windows flag in Concept History.
+		    // Also, if the concept history is ready and it contains old classifiers, add prior estimation and window size to each concepts history learner
+			ConceptHistory.classifiersOnWarning.put(this.ensemble[ensemblePos].indexOriginal, true);
+		    if(ConceptHistory.historyList != null && ConceptHistory.historyList.size() > 0) {
+		        	for (Concept oldClassifier : ConceptHistory.historyList.values()) {
+		        		// If the concept internal evaluator has been initialized for any other classifier on warning, add window size and last error of current classifier on warning 
+		        		if (oldClassifier.ConceptLearner.internalWindowEvaluator != null) {
+		        			//// System.out.println("ADDING VALUES TO INTERNAL EVALUATOR OF CONCEPT "+oldClassifier.historyIndex+" IN POS "+this.indexOriginal);
+			        		((DynamicWindowClassificationPerformanceEvaluator) 
+			        			oldClassifier.ConceptLearner.internalWindowEvaluator).addModel(ensemblePos,
+			        					this.lastError,
+			        					this.ensemble[ensemblePos].windowProperties.windowSize);
+		        		} 
+		        		// Otherwise, initialize a new internal evaluator for the concept
+		        		else {
+		        			//// System.out.println("INSTANCIATING FOR THE FIRST TIME INTERNAL EVALUATOR FOR CONCEPT "+oldClassifier.historyIndex+" IN POS "+this.indexOriginal);
+		       			// TODO: is this correct? can we simplify this in any way?
+		        			DynamicWindowClassificationPerformanceEvaluator tmpInternalWindow = new DynamicWindowClassificationPerformanceEvaluator(
+		       				this.ensemble[ensemblePos].windowProperties.getSize(), 
+		       				this.ensemble[ensemblePos].windowProperties.getIncrements(), 
+		       				this.ensemble[ensemblePos].windowProperties.getMinSize(),
+		            			this.ensemble[ensemblePos].lastError, 
+		            			this.ensemble[ensemblePos].windowProperties.getDecisionThreshold(),
+		            			this.ensemble[ensemblePos].windowProperties.getDynamicWindowInOldClassifiersFlag(), 
+		            			this.ensemble[ensemblePos].windowProperties.getResizingPolicy(),
+		            			this.ensemble[ensemblePos].indexOriginal, 
+		            			"created for old-retrieved classifier in ensembleIndex #"+this.ensemble[ensemblePos].indexOriginal);  	
+		       			tmpInternalWindow.reset(); 
+		       			
+		       			oldClassifier.ConceptLearner.internalWindowEvaluator = tmpInternalWindow;
+		        		}
+		        	}
+		    } 
+	    } // Log warning     
+	    if (eventsLogFile != null && logLevelOption.getValue() >= 1) logEvent(getWarningEvent(ensemblePos));
+	    
 		// 2 Create background Classifier
-		createBkgClassifier();	// line 18: create background classifier
+		this.ensemble[ensemblePos].createBkgClassifier(this.lastWarningOn);	// line 18: create background classifier
 		W.clear();	 // line 19: (TODO: correct?) 
 		
 		// Update the warning detection object for the current object 
@@ -368,6 +374,7 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 		this.warningDetectionMethod = ((ChangeDetector) getPreparedClassOption(this.warningOption)).copy();
 	}
 	
+
 	private void raiseWarning(int ensemblePos, long instancesSeen) {
 		this.lastWarningOn = instancesSeen;
 		// TODO: update here 'lastWarningOn' flag in classifiers of the ensemble, or in another entity
@@ -379,7 +386,7 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 		// TODO. call (saveCurrentConcept) of the baseClassifier
 		   
 		// 2 Start warning window to create bkg learner and retrieve old classifiers (if option enabled)
-		startWarningWindow();  // lines 18-19
+		startWarningWindow(ensemblePos);  // lines 18-19
 	} 
 		
 	/**
@@ -389,17 +396,20 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 		Pc in case of false alarm; 
 		and Ph in case of recurring drift.
 	 * */
-	private void raiseDrift(int ensemblePos, long instancesSeen, boolean falseAlarm, PrintWriter eventsLogFile, int logLevel) {
+	private void raiseDrift(int ensemblePos, long instancesSeen, PrintWriter eventsLogFile, int logLevel) {
 		this.lastDriftOn = instancesSeen;
 		this.numberOfDriftsDetected++;
 		//toLog = false;
+		
+	    // Set false alarms in case of drift at false as default
+	    boolean falseAlarm = false; // Included for cases where driftDecisionMechanism > 0 and recurring drifts are enabled.
 					
   		// 1 Compare DT results using Window method and pick the best one between concept history and bkg classifier.
   		// It returns the best classifier in the object of the bkgLearner
 		//  if there is not another base classifier with lower error than active classifier (and driftDecisionMechanism > 0), then a false alarm is raised
-		if (!this.disableRecurringDriftDetectionOption.isSet()) falseAlarm = switchActiveClassifier(ensemblePos);  // line 32:  c = FindClassifier(c, b, GH) -> Assign best transition to next state
+	    	if (!this.disableRecurringDriftDetectionOption.isSet()) falseAlarm = switchActiveClassifier(ensemblePos);  // line 32:  c = FindClassifier(c, b, GH) -> Assign best transition to next state
 		else if (eventsLogFile != null && logLevel >= 1 ) logEvent(getBkgDriftEvent(ensemblePos)); 
-		      
+		
 		// 2 Transition to new classifier (only if there is no false alarms)
 		if (!falseAlarm) this.ensemble[ensemblePos].reset(); 
 		
@@ -959,10 +969,9 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
         public void trainOnInstance(Instance instance, long instancesSeen) { //	Line 5: (x,y) ← next(S)
             this.classifier.trainOnInstance(instance);    // Line 6: ClassifierTrain(c, x, y) -> Train c on the current instance (x, y).     
         }
-
-        
+	        
         // Creates BKG Classifier in warning window
-        public void createBkgClassifier(int lastWarningOn) { // now lastWarningon received as parameter, so it can be passed from an upper level
+        public void createBkgClassifier(long lastWarningOn) { // now lastWarningon received as parameter, so it can be passed from an upper level
         		// Empty explicitely the BKG internal evaluator if enabled
         		//if (this.bkgLearner != null) this.bkgLearner.internalWindowEvaluator.clear(); // I don't see any improvement
         	
