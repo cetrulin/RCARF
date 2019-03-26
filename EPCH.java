@@ -307,7 +307,7 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 	            
 	            // Check if there was a change – in case of false alarm this triggers warning again and the bkglearner gets replaced
 	            if(this.warningDetectionMethod.getChange()) {  // line 16: warning detected?
-	                raiseWarning(instancesSeen);
+	                raiseWarning(ensemblePos, instancesSeen);
 	                W.add(instance);	// TODO: here? (confirm) line 20
 	            } 
 	            
@@ -397,7 +397,7 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
   		// 1 Compare DT results using Window method and pick the best one between concept history and bkg classifier.
   		// It returns the best classifier in the object of the bkgLearner
 		//  if there is not another base classifier with lower error than active classifier (and driftDecisionMechanism > 0), then a false alarm is raised
-		if (!this.disableRecurringDriftDetectionOption.isSet()) falseAlarm = selectNextActiveClassifier();  // line 32:  c = FindClassifier(c, b, GH) -> Assign best transition to next state
+		if (!this.disableRecurringDriftDetectionOption.isSet()) falseAlarm = switchActiveClassifier(ensemblePos);  // line 32:  c = FindClassifier(c, b, GH) -> Assign best transition to next state
 		else if (eventsLogFile != null && logLevel >= 1 ) logEvent(getBkgDriftEvent(ensemblePos)); 
 		      
 		// 2 Transition to new classifier (only if there is no false alarms)
@@ -437,58 +437,66 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
          * @param historyGroup 
 	    	 *			    		 
          * */
-        public boolean selectNextActiveClassifier(int ensemblePos) { // TODO: verify that ensemblePos makes sense here. maybe not??
+        public boolean switchActiveClassifier(int ensemblePos) { // TODO: verify that ensemblePos makes sense here. maybe not??
 			// TODO: confirm use the input parameter 'historyGroup', that refers to the most similar group of classifiers in the Concept History
 			
 		// Start retrieval from CH 
 		int historyGroup = findGroup(W); // line 31: Group for retrieval of next state (TODO)
 		
 			// 1 Raise a false alarm for the drift if the background learner is not ready
-			if (this.driftDecisionMechanism > 0 && this.bkgLearner == null) return registerDriftFalseAlarm();
+			if (this.driftDecisionMechanismOption.getValue() > 0 && this.ensemble[ensemblePos].bkgLearner == null) return registerDriftFalseAlarm(ensemblePos);
 			
 			// 2 Retrieve best applicable classifier from Concept History
 			int indexOfBestRanked = -1;
 			double errorOfBestRanked = -1.0;
-			HashMap<Integer, Double> ranking = rankConceptHistoryClassifiers(historyGroup);
+			HashMap<Integer, Double> ranking = rankConceptHistoryClassifiers(ensemblePos, historyGroup);
 			if (ranking.size() > 0) {
 				indexOfBestRanked = getMinKey(ranking); // find index of concept with lowest value (error)
 				errorOfBestRanked = Collections.min(ranking.values());
 			}
 			
 			// 3 Compare this against the background classifier and make the decision.
-			if (this.driftDecisionMechanism == 2) {
-				if (activeBetterThanBKGbaseClassifier()) { 
+			if (this.driftDecisionMechanismOption.getValue() == 2) {
+				if (activeBetterThanBKGbaseClassifier(ensemblePos)) { 
 					if (ranking.size() >0 && !activeBetterThanCHbaseClassifier(errorOfBestRanked))
-								 registerRecurringDrift(indexOfBestRanked, historyGroup); 
+								 registerRecurringDrift(ensemblePos, indexOfBestRanked, historyGroup); 
 						// false alarm if active classifier is still the best one and when there are no applicable concepts.
-						else return registerDriftFalseAlarm(); 
+						else return registerDriftFalseAlarm(ensemblePos); 
 				} else { 
-						if(ranking.size() > 0 && bkgBetterThanCHbaseClassifier(errorOfBestRanked)) 
-							registerRecurringDrift(indexOfBestRanked, historyGroup);
-						else registerBkgDrift(); 					
+						if(ranking.size() > 0 && bkgBetterThanCHbaseClassifier(ensemblePos, errorOfBestRanked)) 
+							registerRecurringDrift(ensemblePos, indexOfBestRanked, historyGroup);
+						else registerBkgDrift(ensemblePos); 					
 				}
 				
 			// Drift decision mechanism == 0 or 1 (in an edge case where the bkgclassifier is still NULL, we ignore the comparisons)
 			} else {
-				if(ranking.size() > 0 && this.bkgLearner != null && bkgBetterThanCHbaseClassifier(errorOfBestRanked)) 
+				if(ranking.size() > 0 && this.ensemble[ensemblePos].bkgLearner != null && bkgBetterThanCHbaseClassifier(ensemblePos, errorOfBestRanked)) 
 					registerRecurringDrift (ensemblePos, indexOfBestRanked, historyGroup);
-				else registerBkgDrift ();
+				else registerBkgDrift (ensemblePos);
 			} 
 			
 			return false; // No false alarms raised at this point
 	}
 
+	/**
+	 * This method receives the current list of training examples received during the warning window and checks what's the closest group.
+	 * */
+	private int findGroup(ArrayList<Instance> w2) {
+		// TODO:
+		return -1;
+	}
+
 	// this.indexOriginal - pos of this classifier with active warning in ensemble
-	public HashMap<Integer, Double> rankConceptHistoryClassifiers (int historyGroup) {
+	public HashMap<Integer, Double> rankConceptHistoryClassifiers (int ensemblePos, int historyGroup) {
 			HashMap<Integer, Double> CHranking = new HashMap<Integer, Double>();
 			// Concept History owns only one learner per historic concept. But each learner saves all classifier's independent window size and priorEstimation in a HashMap.
 			// for (Concept auxConcept : ConceptHistory.historyList[historyGroup].values()) 
 			for (Concept auxConcept : ConceptHistory.historyList.values()) // TODO: replace with the line above
 				// Only take into consideration Concepts sent to the Concept History after the current classifier raised a warning (see this consideration in reset*) 
 				if (auxConcept.ConceptLearner.internalWindowEvaluator != null && 
-						auxConcept.ConceptLearner.internalWindowEvaluator.containsIndex(this.indexOriginal)) { // checking indexOriginal to verify that it's an applicable concept
+						auxConcept.ConceptLearner.internalWindowEvaluator.containsIndex(ensemblePos)) { // checking indexOriginal to verify that it's an applicable concept
 					CHranking.put(auxConcept.getHistoryIndex(), ((DynamicWindowClassificationPerformanceEvaluator) 
-							auxConcept.ConceptLearner.internalWindowEvaluator).getFractionIncorrectlyClassified(this.indexOriginal)); // indexOriginal refers to the classifier we compare against. it should be an applicable concept.
+							auxConcept.ConceptLearner.internalWindowEvaluator).getFractionIncorrectlyClassified(ensemblePos)); // indexOriginal refers to the classifier we compare against. it should be an applicable concept.
 				}
 			
 			return CHranking;
@@ -511,7 +519,7 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 	}
 	
 	// this.indexOriginal - pos of this classifier with active warning in ensemble
-	public boolean activeBetterThanBKGbaseClassifier() { 
+	public boolean activeBetterThanBKGbaseClassifier(int ensemblePos) { 
 			// TODO? We may need to do use an internal evaluator for the active learner when driftDecisionMechanism==2. 
 			//		 But the resizing mechanism may need to be different, or compare to the bkg learner.
 			/* return (((DynamicWindowClassificationPerformanceEvaluator) this.internalWindowEvaluator)
@@ -519,9 +527,9 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 					((DynamicWindowClassificationPerformanceEvaluator) this.bkgLearner.internalWindowEvaluator)
 						.getFractionIncorrectlyClassified(this.bkgLearner.indexOriginal));*/
 		
-		return (( this.evaluator.getFractionIncorrectlyClassified() <= 
-					((DynamicWindowClassificationPerformanceEvaluator) this.bkgLearner.internalWindowEvaluator)
-					.getFractionIncorrectlyClassified(this.bkgLearner.indexOriginal))); 
+		return (( this.ensemble[ensemblePos].evaluator.getFractionIncorrectlyClassified() <= 
+					((DynamicWindowClassificationPerformanceEvaluator) this.ensemble[ensemblePos].bkgLearner.internalWindowEvaluator)
+					.getFractionIncorrectlyClassified(this.ensemble[ensemblePos].bkgLearner.indexOriginal))); 
 		// this.bkgLearner.indexOriginal == this.indexOriginal, as it is created for that same ensemble pos.  
 	}
 	
@@ -536,9 +544,9 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 	}
 
 	// this.bkgLearner.indexOriginal - pos of bkg classifier if it becomes active in the ensemble
-	public boolean bkgBetterThanCHbaseClassifier(double bestFromCH) {
-		return (bestFromCH <= ((DynamicWindowClassificationPerformanceEvaluator) this.bkgLearner.internalWindowEvaluator)
-				.getFractionIncorrectlyClassified(this.bkgLearner.indexOriginal));
+	public boolean bkgBetterThanCHbaseClassifier(int ensemblePos, double bestFromCH) {
+		return (bestFromCH <= ((DynamicWindowClassificationPerformanceEvaluator) this.ensemble[ensemblePos].bkgLearner.internalWindowEvaluator)
+				.getFractionIncorrectlyClassified(this.ensemble[ensemblePos].bkgLearner.indexOriginal));
 		// this.bkgLearner.indexOriginal == this.indexOriginal, as it is created for that same ensemble pos.  
 	}
 
@@ -952,13 +960,6 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
             this.classifier.trainOnInstance(instance);    // Line 6: ClassifierTrain(c, x, y) -> Train c on the current instance (x, y).     
         }
 
-        /**
-         * This method receives the current list of training examples received during the warning window and checks what's the closest group.
-         * */
-        private int findGroup(ArrayList<Instance> w2) {
-			// TODO:
-			return -1;
-		}
         
         // Creates BKG Classifier in warning window
         public void createBkgClassifier(int lastWarningOn) { // now lastWarningon received as parameter, so it can be passed from an upper level
