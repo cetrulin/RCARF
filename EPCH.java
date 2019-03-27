@@ -273,7 +273,6 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 	            		this.ensemble[i].bkgLearner.internalWindowEvaluator.addResult(example, bkgVote.getArrayRef());
 	            }
             }
-                        
 		   trainOnInstance(i, instance, this.instancesSeen);
         }    
     }
