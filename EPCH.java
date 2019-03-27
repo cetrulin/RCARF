@@ -281,11 +281,9 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 	    	this.ensemble[ensemblePos].trainOnInstance(instance, instancesSeen); // Line 6: ClassifierTrain(c, x, y) -> Train c on the current instance (x, y).     
 	    
 	    // Should it use a drift detector? Also, is it a backgroundLearner? If so, then do not "incept" another one. 
-	    	// TODO: creo que la segunda condicion no tiene nada de sentido. aqui no deberian entrar los backgrounds. comprobar que no es necesaria eliminarla
-	    	// TODO: comprobar que en caso de eliminar esto, seguimos haciendo sobre los background trees todo lo necesario.
-	    if(!this.disableDriftDetectionOption.isSet() && !this.ensemble[ensemblePos].isBackgroundLearner) { 
-	    		// todo dentro de aqui es para el classifier ppal.	// pero no tiene para nada buena pinta, porque cuando llegamos entonces a los bkg learners?
-	    															// TODO. pensar en si esto esta bien. madurar la idea y proponer forma alternativa si no.
+	    if(!this.disableDriftDetectionOption.isSet()) { // && !this.ensemble[ensemblePos].isBackgroundLearner)  THIS SHOULDN'T BE NECESSARY
+	    		System.out.println("This is a background learner but it shouldn't! "+this.ensemble[ensemblePos].isBackgroundLearner); // just check
+	    		assert !this.ensemble[ensemblePos].isBackgroundLearner; // same check. it should crash if it doesnt pass. if this happens, then the uncommented condition above may be necessary
 	        boolean correctlyClassifies = this.ensemble[ensemblePos].correctlyClassifies(instance);
 	        		
 	        // Check for warning only if useBkgLearner is active
