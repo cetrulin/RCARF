@@ -26,6 +26,7 @@ import moa.core.DoubleVector;
 import moa.core.InstanceExample;
 import moa.core.Measurement;
 import moa.options.ClassOption;
+import weka.core.Instances;
 import weka.gui.sql.event.HistoryChangedListener;
 
 import com.github.javacliparser.FloatOption;
@@ -220,16 +221,9 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
         
         if(this.topology == null)
     			topology = new GNG();  // line 2
-        		topology.resetLearningImpl();
-		    	/*
-		    	topology.nParadaOption=this.nParadaOption; // TODO. add input option for this?
-		    	topology.lambdaOption = this.lambdaOption;
-		    	topology.alfaOption = this.alfaOption;
-		    	topology.maxAgeOption = this.maxAgeOption;
-		    	topology.constantOption = this.constantOption;
-		    	topology.BepsilonOption = this.BepsilonOption;
-		    	topology.NepsilonOption = this.NepsilonOption; 
-		    	*/
+    			//GNG aux = new GNG(this.lambdaOption, this.alfaOption, this.maxAgeOption, // TODO. add input option for this?
+			//			 this.constantOption, this.BepsilonOption, this.NepsilonOption);
+			topology.resetLearningImpl();
         		        
         if(this.ensemble == null) 
             initEnsemble(instance); // line 1
@@ -858,7 +852,7 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
         // GNG topology = null;
         // ArrayList<GUnit> newPrototypes = null;
         int warningWindowSizeThreshold = -1;
-        
+        Instance auxInst;
         
         private void init(int indexOriginal, Classifier classifier, BasicClassificationPerformanceEvaluator evaluatorInstantiated, 
             long instancesSeen, 
@@ -950,26 +944,32 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
         			  // TODO. IMPORTANT. does topology exists at this level? see the reference to it below. this may crash. should we move this to the ensemble level or what?
         	          // Insertion in CH (TODO: get all aux methods coded)
         			  ArrayList<double[]> tmpPrototypes = topology.getPrototypes(); // line 24
-        	          int group = findGroup(tmpPrototypes); // line 25: Group for storing old state 
-        	          if (ConceptHistory.historyList.size() == 0 || group == -1) { // line 26
-        	          	group = createNewGroup(tmpPrototypes); // line 27: create a placeholder for a group represented by 'tmpPrototypes' 
+        	          int previousGroup = findGroup(tmpPrototypes); // line 25: Group for storing old state 
+        	          if (ConceptHistory.historyList.size() == 0 || previousGroup == -1) { // line 26
+        	        	  	previousGroup = createNewGroup(tmpPrototypes); // line 27: create a placeholder for a group represented by 'tmpPrototypes' 
         	          }
 
         			  // 2.1 Move copy of active classifier made before warning to Concept History. Its history ID will be the last one in the history (= size)
         	          this.tmpCopyOfClassifier.addHistoryID(ConceptHistory.nextID());
-        	          // ConceptHistory.historyList[Gc_id].put(
-        	          //										this.tmpCopyOfClassifier.historyIndex, 
-        	          //										this.tmpCopyOfClassifier); // line 29:  push current classifier to Gc (TODO)
+        	          ConceptHistory.historyList.get(previousGroup).groupList.put(this.tmpCopyOfClassifier.historyIndex, this.tmpCopyOfClassifier);  // line 29:  push current classifier to Gc 
+
         			  this.tmpCopyOfClassifier = null; 	// reset tc.
         			  // Consideration *: This classifier is added to the concept history, but it wont be considered by other classifiers on warning until their next warning.
        			  // If it becomes necessary in terms of implementation for this concept, to be considered immediately by the other examples in warning,
        			  // we could have a HashMap in ConceptHistory with a flag saying if a given ensembleIndexPos needs to check the ConceptHistory again and add window sizes and priorError.
-
-       	          // ConceptHistory.historyList[Gc_id].topology = mergeTopologies (CH[Gc_id], tp); // line 30: Update topology on Gc (TODO)
+        			  
+        			  // line 30: Update topology on Gc 
+        			  int merginType= 0; // TODO: Decide with acervant what´s the best way of doing this.
+        			  if (merginType == 0) { // way 1 // TODO where is the second topology coming from?? change
+        				  updateNewTopologyWithPrototypes(ConceptHistory.historyList.get(previousGroup).topology, topology.getPrototypes()); // old prototypes may be more important here due to the way how GNG works
+        			  } else { // way 2
+        				  refreshTopology(ConceptHistory.historyList.get(previousGroup).topology.getPrototypes(), topology.getPrototypes()); // old prototypes will be given less importance in this merginType
+        			  } // end line 30
         			  
         			  // TODO: Important! This probably may need to be at the ensemble level. MOVE??
         			  if (newTopology != null) // else this.Pc = this.Pc
-        				  topology = UpdateNewTopology(newTopology, W); // line 34: Add the examples during warning to a new topology. TODO: confirm
+        				  // TODO OJO: CUIDADO CON ESTO. SI A LA VEZ ESTAMOS TESTEANDO ESTO PODRIA INFLUIR MAL EN LOS RESULTADOS, AL CABIAR LA TOPOLOGIA TAN PRONTO. DEBERIAMOS GUARDARLA EN EL BKG?
+        				  topology = updateNewTopology(newTopology, W); // line 34: Add the examples during warning to a new topology. TODO: confirm
         			  W.clear();  // line 35  TODO: Move with drift detectors
         			   
         			  // 2.2 Update window size in window properties depending on window size inheritance flag (entry parameter/Option)
@@ -995,22 +995,53 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
             this.evaluator.reset();
         }
         
-        /** Batch method */
-	    public GNG UpdateNewTopology(GNG newTopology, ArrayList<Instance> W){
+        private GNG refreshTopology(ArrayList<double[]> groupPrototypes, ArrayList<double[]> prototypes) {
+			GNG top = new GNG();  // line 2
+			//GNG aux = new GNG(this.lambdaOption, this.alfaOption, this.maxAgeOption, // TODO. add input option for this?
+			//			 this.constantOption, this.BepsilonOption, this.NepsilonOption);
+			top.resetLearningImpl();		
+			top = updateNewTopologyWithPrototypes(top, groupPrototypes); // feed first old prototypes from group
+			top = updateNewTopologyWithPrototypes(top, prototypes); // feed new topology to be merged
+			return top;	
+		}
+
+		/** Batch methods */  // can this be only one function? maybe W can always be a list of arrays and Z can train GNG from arrays
+	    public GNG updateNewTopology(GNG newTopology, ArrayList<Instance> W){
 	    		for(Instance inst: W) {
-	    			newTopology.trainOnInstanceImpl(inst);  // TODO: Make sure that we send class as a feature, so everything makes sense after.
-	    			
-	            	// Should we send instances until we reach the stopping criteria? TODO: Question to acervant               		
-	        		/*for(int j=0;newTopology.getCreadas()<newTopology.nParadaOption.getValue();j++){                        	
-	        			newTopology.trainOnInstanceImpl(inst);
-	                	if(j+1==W.size())
-	                		j = -1;
-	            	}*/
-	    		}
-        		return newTopology;  // if topology (Pc) is global, then we don´t need to return this here
+	    			updateTopologySingleInstance(newTopology, inst);
+	    		} return newTopology;  // if topology (Pc) is global, then we don´t need to return this here
         }
+	    
+	    public GNG updateNewTopologyWithPrototypes(GNG newTopology, ArrayList<double []> prototypes) {
+	    		for(double[] prot: prototypes) {
+	    			updateTopologySingleInstance(newTopology, prototypeToArray(prot));
+	    		} return newTopology; // if topology (Pc) is global, then we don´t need to return this here
+	    }
+	    /** */
+
+		private Instance prototypeToArray(double[] prot) {
+			// Temp = new Instances ((this.auxInst).dataset()); // aux var for conversion to instances
+			Instance inst = (Instance) this.auxInst.copy(); // TODO. is all this necessary? maybe I can create an aux function that trains GNG from arrays		
+			for (int j = 0; j < prot.length; j++) inst.setValue(j,prot[j]);
+			// inst.setClassValue(labels.get(i));  (This should not be necessary as in first instance we would also feed the class as part of the topologies, 
+												// and we don´t need to train the ensemble with those prototypes as we do in iGNGSVM ).
+			// Temp.add(instS);  // ADDING TO OBJECT INSTANCES (NEEDED HERE?)
+			return inst;
+		}
+
+		private void updateTopologySingleInstance(GNG newTopology, Instance inst) {
+			newTopology.trainOnInstanceImpl(inst);  // TODO: Make sure that we send class as a feature, so everything makes sense after.
+			
+			// Should we send instances until we reach the stopping criteria? TODO: Question to acervant               		
+			/*for(int j=0;newTopology.getCreadas()<newTopology.stoppingCriteriaOption.getValue();j++){                        	
+				newTopology.trainOnInstanceImpl(inst);
+				if(j+1==W.size())
+					j = -1;
+			}*/
+		}
 
         public void trainOnInstance(Instance instance, long instancesSeen) { //	Line 5: (x,y) ← next(S)
+        		if (this.auxInst == null) this.auxInst = instance.copy(); // Aux variable for conversions
             this.classifier.trainOnInstance(instance);    // Line 6: ClassifierTrain(c, x, y) -> Train c on the current instance (x, y).     
         }
 	        
@@ -1071,9 +1102,7 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
     					// this.driftOption, this.warningOption, 
     					true, useRecurringLearner, true, this.windowProperties.copy(), null, // eventsLogFile, logLevel, 
     					this.warningWindowSizeThreshold); // , this.topology);
-    			// TODO: Save concept in a group
 
-    			// TODO: copy of classifier should be in the actual classifier.
     			this.tmpCopyOfClassifier = new Concept(tmpConcept, 
         				this.createdOn, this.evaluator.getPerformanceMeasurements()[0].getValue(), instancesSeen);
         		
@@ -1092,12 +1121,7 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
     		int id;
     		GNG topology;
     		public ConcurrentHashMap<Integer,Concept> groupList; // List of concepts per group
-    		
-    	    public EPCHBaseLearner copyConcept(int key) {
-	    		EPCHBaseLearner aux = groupList.get(key).getBaseLearner();
-	    		return aux;
-    	    }
-
+    	       
 		public Group (int id, GNG top) {
 			this.id = id; // nextID();
 			this.topology = top;
@@ -1108,6 +1132,11 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
             return ConceptHistory.lastGroupID++;
         }*/
         
+	    public EPCHBaseLearner copyConcept(int key) {
+	    		EPCHBaseLearner aux = groupList.get(key).getBaseLearner();
+	    		return aux;
+	    }
+	    
         // Getters
         public int getID() {
         		return id;
