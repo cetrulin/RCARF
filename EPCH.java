@@ -208,7 +208,7 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 		// Init Drift Detector for Warning detection.
 		if (!this.disableBackgroundLearnerOption.isSet()) {
 			this.warningDetectionMethod = ((ChangeDetector) getPreparedClassOption(this.warningOption)).copy();
-		}
+	    }
 
 		this.evaluator = new BasicClassificationPerformanceEvaluator();
 	}
@@ -234,7 +234,7 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 	public void trainOnInstanceImpl(Instance instance) {
 		++this.instancesSeen;
 
-		// 0 Initialization
+		// Step 0: Initialization
 		if (this.topology == null) { // algorithm line 1
 			this.topology = new GNG(this.GNGLambdaOption, this.alfaOption, this.maxAgeOption, this.constantOption,
 					this.BepsilonOption, this.NepsilonOption);
@@ -242,12 +242,12 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 
 		} if (this.ensemble == null) initEnsemble(instance); // algorithm line 2
 
-		// 1 Update error in concept history learners
+		// Step 1: Update error in concept history learners
 		if (!disableRecurringDriftDetectionOption.isSet() && ConceptHistory.historyList != null
 				&& ConceptHistory.classifiersOnWarning.containsValue(true) && ConceptHistory.historyList.size() > 0) {
 			updateHistoryErrors(instance);
 			
-		} // Iterate through the ensemble for following steps (active and bkg classifiers)
+		} // Steps 2-4: Iterate through the ensemble for following steps (active and bkg classifiers)
 		for (int i = 0; i < this.ensemble.length; i++) {
 			DoubleVector vote = new DoubleVector(this.ensemble[i].getVotesForInstance(instance));
 			InstanceExample example = new InstanceExample(instance);
@@ -261,7 +261,7 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 					this.ensemble[i].bkgLearner.internalWindowEvaluator.addResult(example, bkgVote.getArrayRef());
 				}
 			} trainOnInstance(i, instance, this.instancesSeen);  // Step 4: Train each base classifier
-		}
+		} 
 	}
 
 	/**
@@ -285,11 +285,18 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 	}
 
 	/**
-	 * Train base classifiers, track warning and drifts, and orchestrate the
-	 * comparisons and replacement of classifiers.
+	 * Train base classifiers, track warning and drifts, and orchestrate the comparisons and replacement of classifiers.
 	 * 
 	 * The next line of the algorithm is implemented below:
 	 * Line 6: ClassifierTrain(c, x, y) -> // Train c on the current instance (x, y). 
+	 * 
+	 * The next steps are followed:
+	 * - Step 1 Train base classifier (Line 6)
+	 * - Step 2 Check for drifts and warnings only if drift detection is enabled
+	 * - Step 2.1 Check for warning only if useBkgLearner is active. 
+	 * - Step 2.1.1 Otherwise update the topology (this is done as long as there is no active warnings).
+	 * - Step 2.2 Check for drift
+	 * - Step 3: Log training event
 	 */
 	public void trainOnInstance(int ensemblePos, Instance instance, long instancesSeen) {
 		// Step 1: Train base classifier (Line 6)
@@ -300,12 +307,14 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 			test_to_be_deleted(ensemblePos);
 			boolean correctlyClassifies = this.ensemble[ensemblePos].correctlyClassifies(instance);
 
-			// Step 3: Check for warning only if useBkgLearner is active
-			if (!this.disableBackgroundLearnerOption.isSet()) {
-				warningDetection(ensemblePos, instance, correctlyClassifies);
-			} driftDetection(ensemblePos, correctlyClassifies);
+			// Step 2.1: Check for warning only if useBkgLearner is active. The topology gets updated either way
+			if (!this.disableBackgroundLearnerOption.isSet()) warningDetection(ensemblePos, instance, correctlyClassifies);
+			else UpdateTopology(instance); // Step 2.1.1 (Lines 13-15)
 			
-		} // Step 4: Register training example in log
+			// Step 2.2: Check for drift
+			driftDetection(ensemblePos, correctlyClassifies);
+			
+		} // Step 3: Register training example in log
 		if (this.eventsLogFile != null && logLevelOption.getValue() >= 2)
 			logEvent(getTrainExampleEvent(ensemblePos)); 
 	}
@@ -314,37 +323,53 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 	 * This method implements all the actions that happen when the warning detection is enabled.
 	 * 
 	 * Some of the following lines of the algorithm EPCH are implemented here: 
-	 * - Lines 7-9: False Alarm (Case 2)
+	 * - Lines 7-9: False Alarms handling at buffer W level (Case 2)
 	 * - Line 10: if (size(W) 𝝐 (𝟏, 𝝁)) ->In warning window
 	 * - Line 11: Train the background classifier
 	 * - Line 12: Add instance to the buffer of instances during warning // TODO: W should be an object 'Instances'
 	 * - Line 13-15: Update centroids / prototypes.
+	 * - Line 16-20: If a warning is detected, start warning window and clear buffer W.
+	 * 
+	 * The steps followed for this can be seen below:
+	 * - Step 1 Check for False Alarm (Case 2) - Lines 7-10
+	 * - Step 2 Update warning detection adding latest error  /*********** warning detection ***********
+	 * - Step 3 If the classifier is in the warning window, train the bkg classifier and add the current instance to W.
+	 * - Step 3.1 Otherwise update the topology (the topology does not update during warning)
+	 * - Step 4 Check if there was a change (warning signal). If so, start warning window;
+	 * 		 	In case of false alarm this triggers warning again and the bkg learner gets replaced.
+	 * - Step 4.1 Start warning window.
+	 * - Step 4.2 Update the warning detection object for the current object. 
+	 * 			  This effectively resets changes made to the object while it was still a bkglearner.
 	 * */
 	protected void warningDetection(int ensemblePos, Instance instance, boolean correctlyClassifies) {
-		/*********** warning detection ***********/
-		this.warningDetectionMethod.input(correctlyClassifies ? 0 : 1); // Update the WARNING detection method
+		// Step 1: Check for False Alarm case 2 (Lines 7-9)
+		if (this.W.size() >= warningWindowSizeThresholdOption.getValue()) { 
+			this.ensemble[ensemblePos].bkgLearner = null; // Line 8
+			this.ensemble[ensemblePos].tmpCopyOfClassifier = null;
+			this.warningDetectionMethod = ((ChangeDetector) getPreparedClassOption(this.warningOption)).copy(); // restart warning
+			this.W.clear(); // Line 8
+			// Should the topology be also cleaned at this stage? if so, initialize and restart it here.	
+		} 
+		// Step 2: Update the WARNING detection method
+		this.warningDetectionMethod.input(correctlyClassifies ? 0 : 1); 
 
-		// TODO (confirm the next lines 7-15)
-		if (this.W.size() > warningWindowSizeThresholdOption.getValue())
-			this.W.clear(); // Lines 7-9: False Alarm (Case 2)
-		if (this.W.size() > 1 && this.W.size() < warningWindowSizeThresholdOption.getValue()) { // Lines 10-15
-			if (this.ensemble[ensemblePos].bkgLearner != null)
+		// Step 3: Either warning window training/buffering or topology update (Lines 10-15)
+		if (this.W.size() >= 1 && this.W.size() < warningWindowSizeThresholdOption.getValue()) { // && 
+				// this.ensemble[ensemblePos].bkgLearner != null) { // TODO: check condition and test below that then W is in that range, bkgLearner != null
+			if (this.ensemble[ensemblePos].bkgLearner != null) // this may not be necessary. to confirm with the test from below
 				this.ensemble[ensemblePos].bkgLearner.classifier.trainOnInstance(instance); // Line 11
+			assert this.ensemble[ensemblePos].bkgLearner != null; // TEST: if it crashes, then leave the code as it is. otherwise we can replace the code above
 			this.W.add(instance); // Line 12
-		} else UpdateTopology(instance); // Lines 13-15
+		} else UpdateTopology(instance); // Step 3.1: Lines 13-15
 
-		// Check if there was a change – in case of false alarm this triggers warning
-		// again and the bkglearner gets replaced
-		if (this.warningDetectionMethod.getChange()) { // line 16: warning detected?
-			startWarningWindow(ensemblePos);
-			// Update the warning detection object for the current object
-			// (this effectively resets changes made to the object while it was still a bkglearner).
-			this.warningDetectionMethod = ((ChangeDetector) getPreparedClassOption(this.warningOption)).copy();
+		// Step 4: line 16: warning detected?
+		if (this.warningDetectionMethod.getChange()) { 
+			startWarningWindow(ensemblePos); //Step 4.1
+			this.warningDetectionMethod = ((ChangeDetector) getPreparedClassOption(this.warningOption)).copy(); // Step 4.2 
 			this.W.clear(); // line 19
-			this.W.add(instance); // line 20
 		}
 	}
-
+	
 	public void test_to_be_deleted(int ensemblePos) {  // TODO: DELETE ONCE RUN AND CHECKED
 		System.out.println("This is a background learner but it shouldn't! " + 
 				this.ensemble[ensemblePos].isBackgroundLearner); // just check
@@ -382,7 +407,7 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 		if (eventsLogFile != null && logLevelOption.getValue() >= 1) logEvent(getWarningEvent(ensemblePos)); // Log this
 
 		// Step 4: Create background Classifier
-		this.ensemble[ensemblePos].createBkgClassifier(this.lastWarningOn); // line 18: create background classifier	
+		this.ensemble[ensemblePos].createBkgClassifier(this.lastWarningOn); // line 18: create background classifier
 	}
 	
 	/**
@@ -434,11 +459,17 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 	}
 
 	/**
-	 * This method selects the next concept classifier and closest group topology 
-	 * 	when a drift is raised.
-	 * 	Pselected is: a new P (Pn) in case of bkgDrift; 
-	 *  Pc in case of false alarm; 
-	 *  and Ph in case of recurring drift.
+	 * This method selects the next concept classifier and closest group topology when a drift is raised.
+	 * 	Pselected is: a new P (Pn) in case of bkgDrift; Pc in case of false alarm; and Ph in case of recurring drift.
+	 * 
+	 * The next steps are followed:
+	 * - 0 Set false in case of drift at false as default. 
+	 *     Included for cases where driftDecisionMechanism > 0 and recurring drifts are enabled. 
+	 * - 1 Compare DT results using Window method and pick the best one between CH and bkg classifier. 
+	 *     It returns the best classifier in the object of the bkgLearner if there is not another base classifier 
+	 *      with lower error than active classifier (and driftDecisionMechanism > 0), then a false alarm is raised.
+	 *     This step belong to line 32 in the algorithm: c = FindClassifier(c, b, GH) -> Assign best transition to next state.
+	 * 
 	 */
 	protected void driftDetection(int ensemblePos, boolean correctlyClassifies) {
 		/*********** drift detection ***********/
@@ -450,29 +481,14 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 			this.numberOfDriftsDetected++;
 
 			// Set false alarms in case of drift at false as default
-			boolean falseAlarm = false; // Included for cases where driftDecisionMechanism > 0 and recurring drifts are
-										// enabled.
-
-			// 1 Compare DT results using Window method and pick the best one between
-			// concept history and bkg classifier.
-			// It returns the best classifier in the object of the bkgLearner
-			// if there is not another base classifier with lower error than active
-			// classifier (and driftDecisionMechanism > 0), then a false alarm is raised
-			if (!this.disableRecurringDriftDetectionOption.isSet())
-				falseAlarm = switchActiveClassifier(ensemblePos); // line 32: c = FindClassifier(c, b, GH) -> Assign best
-																	// transition to next state
+			boolean falseAlarm = false; 
+			
+			if (!this.disableRecurringDriftDetectionOption.isSet()) // step 1
+				falseAlarm = switchActiveClassifier(ensemblePos); // line 32  of the algorithm
 			else if (this.eventsLogFile != null && this.logLevelOption.getValue() >= 1)
 				logEvent(getBkgDriftEvent(ensemblePos));
 
-			// 2 Transition to new classifier (only if there is no false alarms)
-			if (!falseAlarm)
-				this.ensemble[ensemblePos].reset();
-
-			// asuarez. 25 sept 2018
-			// IMPORTANT. False alarms avoid drifts, but they do not disable a certain
-			// warning on a base classifier. // any TODO here??
-			// In cases of a false alarm, the active classifiers will still have an active
-			// warning.
+			if (!falseAlarm) this.ensemble[ensemblePos].reset(); // Step 2
 		}
 	}
 
@@ -516,8 +532,8 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 	 * @param historyGroup
 	 * 
 	 */
-	public boolean switchActiveClassifier(int ensemblePos) { 
-		
+	public boolean switchActiveClassifier(int ensemblePos) {
+	    
 		// Start retrieval from CH
 		int historyGroup = findGroup(instancesToArray(W)); // line 31: Group for retrieval of next state (TODO)
 
@@ -604,25 +620,15 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 	 * This function computes the sum of the distances between every prototype in
 	 * the topology passed and the current list of instances during warning (W)
 	 */
-	private double getAbsoluteSumDistances(ArrayList<double[]> WInstances, ArrayList<double[]> topologyPrototypes) { // TODO:
-																														// make
-																														// sure
-																														// that
-																														// the
-																														// metric
-																														// used
-																														// here
-																														// makes
-																														// sense
+	private double getAbsoluteSumDistances(ArrayList<double[]> WInstances, ArrayList<double[]> topologyPrototypes) { 
 		double totalDist = 0.0;
 
 		for (double[] inst : WInstances) {
 			for (double[] prototype : topologyPrototypes) {
 				totalDist += GUnit.dist(prototype, inst); // TODO: Make sure that we are adding the class value as a
-															// feature in GNG
+															// feature in GNG and also make sure that the metric used here for calculating distances makes sense.
 			}
-		}
-		return totalDist;
+		} return totalDist;
 	}
 
 	// this.indexOriginal - pos of this classifier with active warning in ensemble
