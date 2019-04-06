@@ -18,17 +18,6 @@
  */
 package moa.classifiers.meta;
 
-import com.yahoo.labs.samoa.instances.Instance;
-import moa.classifiers.AbstractClassifier;
-import moa.classifiers.Classifier;
-import moa.classifiers.MultiClassClassifier;
-import moa.core.DoubleVector;
-import moa.core.InstanceExample;
-import moa.core.Measurement;
-import moa.options.ClassOption;
-import weka.core.Instances;
-import weka.gui.sql.event.HistoryChangedListener;
-
 import com.github.javacliparser.FloatOption;
 import com.github.javacliparser.FlagOption;
 import com.github.javacliparser.IntOption;
@@ -37,26 +26,29 @@ import com.github.javacliparser.StringOption;
 import java.io.FileNotFoundException;
 import java.io.PrintWriter;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Map.Entry;
-import java.util.Set;
-import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
 
+import moa.core.DoubleVector;
+import moa.core.InstanceExample;
+import moa.core.Measurement;
+import moa.options.ClassOption;
+import moa.classifiers.AbstractClassifier;
+import moa.classifiers.Classifier;
+import moa.classifiers.MultiClassClassifier;
+import moa.classifiers.core.driftdetection.ChangeDetector;
+import moa.classifiers.igngsvm.gng.GNG;
+import moa.classifiers.igngsvm.gng.GUnit;
 import moa.evaluation.BasicClassificationPerformanceEvaluator;
 import moa.evaluation.DynamicWindowClassificationPerformanceEvaluator;
 import moa.evaluation.LearningPerformanceEvaluator;
 
-import moa.classifiers.core.driftdetection.ChangeDetector;
-import moa.classifiers.meta.EPCH.ConceptHistory;
-import moa.classifiers.meta.EPCH.Event;
+import com.yahoo.labs.samoa.instances.Instance;
+import com.yahoo.labs.samoa.instances.Instances;
+// import com.yahoo.labs.samoa.instances.InstancesHeader;
 
-//for EPCH
-import moa.classifiers.igngsvm.gng.GNG;
-import moa.classifiers.igngsvm.gng.GUnit;
 
 /**
  * Evolving Pool of Classifiers with History
@@ -73,6 +65,9 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 
 	private static final long serialVersionUID = 1L;
 
+	/////////////
+	// Options
+	// -------
 	public ClassOption baseLearnerOption = new ClassOption("baseLearner", 'l', "Classifier to train.", Classifier.class,
 			"trees.HoeffdingTree -e 1000000 -g 200 -c 0"); // default params for hoeffding trees
 
@@ -97,9 +92,6 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 	public FlagOption disableBackgroundLearnerOption = new FlagOption("disableBackgroundLearner", 'q',
 			"Should use bkg learner? If disabled then reset tree immediately.");
 
-	// ////////////////////////////////////////////////
-	// Added in previous versions by @suarezcetrulo
-	// ////////////////////////////////////////////////
 	public FlagOption disableRecurringDriftDetectionOption = new FlagOption("disableRecurringDriftDetection", 'r',
 			"Should save old learners to compare against in the future? If disabled then recurring concepts are not handled explicitely.");
 
@@ -139,9 +131,8 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 			LearningPerformanceEvaluator.class, "BasicClassificationPerformanceEvaluator");
 
 	public IntOption driftDecisionMechanismOption = new IntOption("driftDecisionMechanism", 'k',
-			"0 does not take into account the performance active base classifier explicitely, at the time of the drift; "
-					+ "1 takes into consideration active classifiers",
-			2, 0, 2);
+			"0 does not take into account the performance active base classifier explicitely, at the time of the drift; "  + 
+			"1 takes into consideration active classifiers", 2, 0, 2);
 
 	public IntOption warningWindowSizeThresholdOption = new IntOption("WarningWindowSizeThreshold", 'h',
 			"Threshold for warning window size that defines a false a alarm.", 300, 1, Integer.MAX_VALUE);
@@ -155,6 +146,8 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 	public FloatOption NepsilonOption = new FloatOption("epsilonN", 'K', "EpsilonN", 0.006);
 	public IntOption stoppingCriteriaOption = new IntOption("stoppingCriteria", 'c', "Stopping criteria", 0);
 
+	//////////
+	
 	protected EPCHBaseLearner[] ensemble;
 	protected long instancesSeen;
 	protected int subspaceSize;
@@ -184,8 +177,14 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 	Instance auxInst;
 	GNG topology;
 	GNG newTopology;
-	ArrayList<Instance> W = new ArrayList<Instance>(); // list of training examples during warning window.
+	ArrayList<Instance> W = new ArrayList<Instance>(); // list of training examples during warning window. // TODO: W should be an object 'Instances'
 
+	
+	///////////////////////////////////////
+	//
+	// TRAINING AND TESTING OF THE ENSEMBLE
+	// -----------------------------------
+	
 	@Override
 	public void resetLearningImpl() {
 		// Reset attributes
@@ -227,7 +226,7 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 	 * - 0 Initialization
 	 * - 1 If the concept history is ready and it contains old classifiers, then test the training instance 
 	 * 		in each old classifier's internal evaluator to know how their errors compare against bkg one.
-	 * - 2 Update error in active classifier (TODO: create internal evaluator for this also? or use the same basic evaluator for all of these?)
+	 * - 2 Update error in active classifier
 	 * - 3 Update error in background classifier's internal evaluator. 
 	 * - 4 Train each base classifier, orchestrating drifts and switching of classifiers.
 	 */
@@ -237,12 +236,8 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 		if (this.auxInst == null) this.auxInst = instance.copy(); // Aux variable for conversions
 		
 		// Step 0: Initialization
-		if (this.topology == null) { // algorithm line 1
-			this.topology = new GNG(this.GNGLambdaOption, this.alfaOption, this.maxAgeOption, this.constantOption,
-					this.BepsilonOption, this.NepsilonOption);
-			this.topology.resetLearningImpl();
-
-		} if (this.ensemble == null) initEnsemble(instance); // algorithm line 2
+		if (this.topology == null) this.topology = initTopology(); // algorithm line 1
+		if (this.ensemble == null) initEnsemble(instance); // algorithm line 2
 
 		// Step 1: Update error in concept history learners
 		if (!disableRecurringDriftDetectionOption.isSet() && ConceptHistory.historyList != null
@@ -311,7 +306,7 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 
 			// Step 2.1: Check for warning only if useBkgLearner is active. The topology gets updated either way
 			if (!this.disableBackgroundLearnerOption.isSet()) warningDetection(ensemblePos, instance, correctlyClassifies);
-			else UpdateTopology(instance); // Step 2.1.1 (Lines 13-15)
+			else this.topology.trainOnInstanceImpl(instance);  // Step 2.1.1 (Lines 13-15)
 			
 			// Step 2.2: Check for drift
 			driftDetection(ensemblePos, correctlyClassifies);
@@ -321,6 +316,166 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 			logEvent(getTrainExampleEvent(ensemblePos)); 
 	}
 	
+	@Override
+	public double[] getVotesForInstance(Instance instance) {
+		Instance testInstance = instance.copy();
+		if (this.ensemble == null) initEnsemble(testInstance);
+		DoubleVector combinedVote = new DoubleVector();
+
+		for (int i = 0; i < this.ensemble.length; ++i) {
+			DoubleVector vote = new DoubleVector(this.ensemble[i].getVotesForInstance(testInstance));
+			if (vote.sumOfValues() > 0.0) {
+				vote.normalize();
+				double acc = this.ensemble[i].evaluator.getPerformanceMeasurements()[1].getValue();
+				if (!this.disableWeightedVote.isSet() && acc > 0.0) {
+					for (int v = 0; v < vote.numValues(); ++v) vote.setValue(v, vote.getValue(v) * acc);
+				}
+				combinedVote.addValues(vote);
+			}
+		}
+		return combinedVote.getArrayRef();
+	}
+
+	@Override
+	public boolean isRandomizable() {
+		return true;
+	}
+
+	@Override
+	public void getModelDescription(StringBuilder arg0, int arg1) {
+	}
+
+	@Override
+	protected Measurement[] getModelMeasurementsImpl() {
+		return null;
+	}
+
+	protected void initEnsemble(Instance instance) {
+
+		// Init the ensemble.
+		int ensembleSize = this.ensembleSizeOption.getValue();
+		this.ensemble = new EPCHBaseLearner[ensembleSize];
+		BasicClassificationPerformanceEvaluator classificationEvaluator = (BasicClassificationPerformanceEvaluator) 
+		      getPreparedClassOption(this.evaluatorOption);
+
+		// Only initialize Concept History if the handling of recurring concepts is enabled
+		if (!this.disableRecurringDriftDetectionOption.isSet()) {
+			ConceptHistory.lastID = 0;
+			ConceptHistory.historyList = new ConcurrentHashMap<Integer, Group>();
+			ConceptHistory.classifiersOnWarning = new ConcurrentHashMap<Integer, Boolean>();
+		}
+
+		try { // Start events logging and print headers
+			if (disableEventsLogFileOption.isSet()) {
+				eventsLogFile = null;
+			} else {
+				eventsLogFile = new PrintWriter(this.eventsLogFileOption.getValue());
+				logEvent(getEventHeaders());
+			}
+		} catch (FileNotFoundException e) {
+			e.printStackTrace();
+		}
+
+		Classifier learner = (Classifier) getPreparedClassOption(this.baseLearnerOption);
+		learner.resetLearning();
+
+		for (int i = 0; i < ensembleSize; ++i) {
+			this.ensemble[i] = new EPCHBaseLearner(i, (Classifier) learner.copy(),
+					(BasicClassificationPerformanceEvaluator) classificationEvaluator.copy(), this.instancesSeen,
+					!this.disableBackgroundLearnerOption.isSet(), // these are still needed con the level below
+					!this.disableDriftDetectionOption.isSet(), // these are still needed con the level below
+					// driftDecisionMechanismOption.getValue(),
+					// driftDetectionMethodOption,
+					// warningDetectionMethodOption,
+					false, // isbkglearner
+					!this.disableRecurringDriftDetectionOption.isSet(), false, // @suarezcetrulo : first classifier is
+																				// not old. An old classifier (retrieved
+																				// from the concept history).
+					new Window(this.defaultWindowOption.getValue(), this.windowIncrementsOption.getValue(),
+							this.minWindowSizeOption.getValue(), this.thresholdOption.getValue(),
+							this.rememberConceptWindowOption.isSet() ? true : false,
+							this.resizeAllWindowsOption.isSet() ? true : false, windowResizePolicyOption.getValue()),
+					null, // @suarezcetrulo : Windows start at NULL
+					// eventsLogFile,
+					// logLevelOption.getValue(),
+					warningWindowSizeThresholdOption.getValue() // ,
+			// new GNG()
+			);
+		}
+	}
+
+	
+	///////////////////////////////////////
+	//
+	// TOPOLOGY RELATED METHODS
+	// TODO: Create class for this?
+	// TODO: Make sure that we are adding the class value as a feature in GNG and 
+	//         also make sure that the metric used here for calculating distances makes sense.
+	// -----------------------------------
+	
+	protected GNG initTopology() {
+		GNG top = new GNG(this.GNGLambdaOption, this.alfaOption, this.maxAgeOption, this.constantOption,
+				this.BepsilonOption, this.NepsilonOption);
+		top.resetLearningImpl();
+		return top;
+	}
+
+	protected GNG merge_topologies(int previousGroup) {
+		// line 30: Update topology on Gc
+		int merginType = 0; // TODO: Decide with acervant what´s the best way of doing this.
+		if (merginType == 0) { // way 1 // TODO where is the second topology coming from?? change
+			return updateNewTopologyWithPrototypes(ConceptHistory.historyList.get(previousGroup).topology,
+					this.topology.getPrototypes()); // old prototypes may be more important here due to the way how GNG works
+		} else { // way 2
+			return refreshTopology(ConceptHistory.historyList.get(previousGroup).topology.getPrototypes(),
+					this.topology.getPrototypes()); // old prototypes will be given less importance in this merginType
+		} // end line 30
+	}
+
+	protected GNG refreshTopology(ArrayList<double[]> groupPrototypes, ArrayList<double[]> prototypes) {
+		GNG top = initTopology(); // line 2 
+		top = updateNewTopologyWithPrototypes(top, groupPrototypes); // feed first old prototypes from group
+		top = updateNewTopologyWithPrototypes(top, prototypes); // feed new topology to be merged
+		return top;
+	}
+
+	/** Batch methods */ 
+	// TODO: can this be only one function? maybe W can always be a list of arrays and Z can train GNG from arrays
+	protected GNG updateNewTopology(GNG newTopology, ArrayList<Instance> W) {
+		for (Instance inst : W) newTopology.trainOnInstanceImpl(inst);
+		return newTopology; // if topology (Pc) is global, then we don´t need to return this here
+	}
+
+	protected GNG updateNewTopologyWithPrototypes(GNG newTopology, ArrayList<double[]> prototypes) {
+		for (double[] prot : prototypes) newTopology.trainOnInstanceImpl(prototypeToArray(prot));
+		return newTopology; // if topology (Pc) is global, then we don´t need to return this here
+	}
+
+	protected Instance prototypeToArray(double[] prot) {
+		// Temp = new Instances ((this.auxInst).dataset()); // aux var for conversion to
+		// instances
+		Instance inst = (Instance) this.auxInst.copy(); // TODO. is all this necessary? maybe I can create an aux function that trains GNG from arrays
+		for (int j = 0; j < prot.length; j++)
+			inst.setValue(j, prot[j]);
+		// inst.setClassValue(labels.get(i)); (This should not be necessary as in first instance we would also feed the class as part of the topologies,
+		// and we don´t need to train the ensemble with those prototypes as we do in
+		// iGNGSVM ).
+		// Temp.add(instS); // ADDING TO OBJECT INSTANCES (NEEDED HERE?)
+		return inst;
+	}
+
+	protected ArrayList<double[]> instancesToArray(ArrayList<Instance> WInstances) { // TODO. 'Instances' instead of ArrayList
+		ArrayList<double[]> converted = new ArrayList<double[]>();
+		for (Instance inst : WInstances) converted.add(inst.toDoubleArray()); 
+		return converted;
+	}
+	
+	
+	///////////////////////////////////////
+	//
+	// WARNING AND DRIFT HANDLING 
+	// -----------------------------------
+	
 	/**
 	 * This method implements all the actions that happen when the warning detection is enabled.
 	 * 
@@ -328,13 +483,13 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 	 * - Lines 7-9: False Alarms handling at buffer W level (Case 2)
 	 * - Line 10: if (size(W) 𝝐 (𝟏, 𝝁)) ->In warning window
 	 * - Line 11: Train the background classifier
-	 * - Line 12: Add instance to the buffer of instances during warning // TODO: W should be an object 'Instances'
+	 * - Line 12: Add instance to the buffer of instances during warning 
 	 * - Line 13-15: Update centroids / prototypes.
 	 * - Line 16-20: If a warning is detected, start warning window and clear buffer W.
 	 * 
 	 * The steps followed for this can be seen below:
-	 * - Step 1 Check for False Alarm (Case 2) - Lines 7-10
-	 * - Step 2 Update warning detection adding latest error  /*********** warning detection ***********
+	 * - Step 1 Update warning detection adding latest error  /*********** warning detection ***********
+	 * - Step 2 Check for False Alarm (Case 2) - Lines 7-10
 	 * - Step 3 If the classifier is in the warning window, train the bkg classifier and add the current instance to W.
 	 * - Step 3.1 Otherwise update the topology (the topology does not update during warning)
 	 * - Step 4 Check if there was a change (warning signal). If so, start warning window;
@@ -345,13 +500,12 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 	 *	
 	 */
 	protected void warningDetection(int ensemblePos, Instance instance, boolean correctlyClassifies) {
-		// Step 1: Check for False Alarm case 2 (Lines 7-9)
-		if (this.W.size() >= warningWindowSizeThresholdOption.getValue()) resetWarningWindow(ensemblePos); // Line 8
-		// TODO (IMP): change the place of the line above to be consistent with the rest of the code?? maybe after updating (as step 2)? then change >='s with >'s
-		 
-		// Step 2: Update the WARNING detection method
+		// Step 1: Update the WARNING detection method
 		this.warningDetectionMethod.input(correctlyClassifies ? 0 : 1); 
 
+		// Step 2: Check for False Alarm case 2 (Lines 7-9)
+		if (this.W.size() >= warningWindowSizeThresholdOption.getValue()) resetWarningWindow(ensemblePos); // Line 8
+		 		
 		// Step 3: Either warning window training/buffering or topology update (Lines 10-15)
 		if (this.W.size() >= 1 && this.W.size() < warningWindowSizeThresholdOption.getValue()) { // && 
 				// this.ensemble[ensemblePos].bkgLearner != null) { // TODO: check condition and test below that then W is in that range, bkgLearner != null
@@ -359,7 +513,7 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 				this.ensemble[ensemblePos].bkgLearner.classifier.trainOnInstance(instance); // Line 11
 			assert this.ensemble[ensemblePos].bkgLearner != null; // TEST: if it crashes, then leave the code as it is. otherwise we can replace the code above
 			this.W.add(instance); // Line 12
-		} else UpdateTopology(instance); // Step 3.1: Lines 13-15
+		} else this.topology.trainOnInstanceImpl(instance); // Step 3.1: Lines 13-15
 
 		// Step 4: line 16: warning detected?
 		if (this.warningDetectionMethod.getChange()) { 
@@ -368,16 +522,14 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 		}
 	}
 	
-	public void resetWarningWindow(int ensemblePos){
+	protected void resetWarningWindow(int ensemblePos){
 			this.ensemble[ensemblePos].bkgLearner = null; // Lines 8 and 19
 			this.ensemble[ensemblePos].tmpCopyOfClassifier = null;
 			this.warningDetectionMethod = ((ChangeDetector) getPreparedClassOption(this.warningOption)).copy(); // restart warning 
 			this.W.clear(); // Lines 8 and 19
-			// Should the topology be also cleaned at this stage? if so, initialize and restart it here. 
-			// but mind the fact that tgis method is called from 2 diff places above
 	}
 	
-	public void test_to_be_deleted(int ensemblePos) {  // TODO: DELETE ONCE RUN AND CHECKED
+	protected void test_to_be_deleted(int ensemblePos) {  // TODO: DELETE ONCE RUN AND CHECKED
 		System.out.println("This is a background learner but it shouldn't! " + 
 				this.ensemble[ensemblePos].isBackgroundLearner); // just check
 		// same check below. it should crash if it doesnt pass. if this happens, then
@@ -396,7 +548,7 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 	 * 		add window size and last error of current classifier on warning.
 	 *		Otherwise, initialize a new internal evaluator for the concept
 	 * */
-	private void startWarningWindow(int ensemblePos) {
+	protected void startWarningWindow(int ensemblePos) {
 		this.lastWarningOn = this.instancesSeen;
 		this.numberOfWarningsDetected++;
 
@@ -413,7 +565,6 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 	}
 	
 	/**
-	 * 
 	 * This updates objects with warning. 
 	 * The next steps are followed:
 	 * - 1 It turns on windows flag in the Concept History.
@@ -423,14 +574,14 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 	 * 		add window size and last error of current classifier on warning.
 	 * - 3 Otherwise, initialize a new internal evaluator for the concept
 	 */
-	public void updateObjectsWithWarning(int ensemblePos) { // TODO: refactor this method
+	protected void updateObjectsWithWarning(int ensemblePos) { // TODO: refactor this method (move it to the CH class?)
 	    
 		// Step: 1 Update of objects with warning. 
 		this.ensemble[ensemblePos].internalWindowEvaluator = null;
 		ConceptHistory.classifiersOnWarning.put(this.ensemble[ensemblePos].indexOriginal, true);
 		
 		if (ConceptHistory.historyList != null && ConceptHistory.historyList.size() > 0) {
-			for (int historyGroup : ConceptHistory.historyList.keySet()) { // TODO: figure the line below out
+			for (int historyGroup : ConceptHistory.historyList.keySet()) {
 				for (Concept oldClassifier : ConceptHistory.historyList.get(historyGroup).groupList.values()) { 
 					if (oldClassifier.ConceptLearner.internalWindowEvaluator != null) { // Step 2
 						//// System.out.println("ADDING VALUES TO INTERNAL EVALUATOR OF CONCEPT
@@ -473,11 +624,16 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 	 *     
 	 * Lines of the algorithm Lines 24-25 are implemented here:
 	 * -----------   
-	 * line 25: Group for storing old state
-	 * line 27: create a placeholder for a group represented by 'tmpPrototypes'
-	 * line 29: push current classifier to Gc
-	 * line 30: Update topology on Gc
-	 * line 34: Add the examples during warning to a new topology.
+	 * Insertion in CH (Lines 24-28)
+	 * 	line 24: get prototypes from topology
+	 * 	line 25: Group for storing old state
+	 * 	line 26-28: create a placeholder for a group represented by 'tmpPrototypes'
+	 * Retrieval from CH and refresh (lines 29-35)
+	 * 	line 29: push current classifier to Gc
+	 * 	line 30: Update topology on Gc
+	 *  lines 31-33: In method switchActiveClassifier 
+	 * 	line 34: Add the examples during warning to a new topology.
+	 * 	line 35: Empty list W
 	 */
 	protected void driftDetection(int ensemblePos, boolean correctlyClassifies) {
 		/*********** drift detection ***********/
@@ -492,25 +648,23 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 			boolean falseAlarm = false; 
 			
 			if (!this.disableRecurringDriftDetectionOption.isSet()) // step 1
-				falseAlarm = switchActiveClassifier(ensemblePos); // line 32 of the algorithm 
+				falseAlarm = switchActiveClassifier(ensemblePos); // lines 31-33 of the algorithm 
 			else if (this.eventsLogFile != null && this.logLevelOption.getValue() >= 1)
-				logEvent(getBkgDriftEvent(ensemblePos));
+				logEvent(getBkgDriftEvent(ensemblePos));  // TODO. refactor this logEvent function so always it's inside of 'registerDrift'
 			
 			if (!falseAlarm) { // Step 2
 				// Insertion in CH (Lines 24-27)
-				ArrayList<double[]> tmpPrototypes = topology.getPrototypes(); 
+				ArrayList<double[]> tmpPrototypes = topology.getPrototypes(); // 24
 				int previousGroup = findGroup(tmpPrototypes); // line 25:
-				if (ConceptHistory.historyList.size() == 0 || previousGroup == -1) previousGroup = createNewGroup(tmpPrototypes); // lines 26-27				
+				if (ConceptHistory.historyList.size() == 0 || previousGroup == -1) // 26
+					previousGroup = createNewGroup(tmpPrototypes); // line 27				
 				pushToConceptHistory(ensemblePos, previousGroup); // lines 29-30
-				 
-				if (newTopology != null) // else this.Pc = this.Pc
-					// TODO OJO: CUIDADO CON ESTO. SI A LA VEZ ESTAMOS TESTEANDO ESTO PODRIA INFLUIR
-					// MAL EN LOS RESULTADOS, AL CAMBIAR LA TOPOLOGIA TAN PRONTO. DEBERIAMOS GUARDARLA EN EL BKG?
-					topology = updateNewTopology(newTopology, W); // line 34 TODO: confirm
+
+				this.ensemble[ensemblePos].reset(); // reset base classifier 
+				if (newTopology != null) this.topology = updateNewTopology(this.newTopology, this.W); // line 34 
 				W.clear(); // line 35 
-				
-				this.ensemble[ensemblePos].reset(); 
-			}
+			} 
+
 		}
 	}
 
@@ -522,82 +676,59 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 		ConceptHistory.historyList.get(previousGroup).setTopology(merge_topologies(previousGroup)); // line 30
 	}
 
-	protected GNG merge_topologies(int previousGroup) {
-		// line 30: Update topology on Gc
-		int merginType = 0; // TODO: Decide with acervant what´s the best way of doing this.
-		if (merginType == 0) { // way 1 // TODO where is the second topology coming from?? change
-			return updateNewTopologyWithPrototypes(ConceptHistory.historyList.get(previousGroup).topology,
-					this.topology.getPrototypes()); // old prototypes may be more important here due to the way how GNG works
-		} else { // way 2
-			return refreshTopology(ConceptHistory.historyList.get(previousGroup).topology.getPrototypes(),
-					this.topology.getPrototypes()); // old prototypes will be given less importance in this merginType
-		} // end line 30
+
+	///////////////////////////////////////
+	//
+	// DRIFT ACTIONS
+	// -----------------------------------
+
+	/***
+	 * Register false alarm an update variables consequently
+	 * (both the active classifier and the ensemble topology will remain being the same)
+	 */
+	protected boolean registerDriftFalseAlarm(int ensemblePos) {
+		if (this.eventsLogFile != null && this.logLevel >= 0) logEvent(getFalseAlarmEvent(ensemblePos));
+		this.newTopology = null; // then Pn = Pc  (line 33)
+		return true; 
 	}
+
+	/***
+	 * Register recurring drift an update variables consequently
+	 * Copy the best recurring learner in the history group passed, and the topology of this group. 
+	 */
+	protected void registerRecurringDrift(int ensemblePos, Integer indexOfBestRanked, int historyGroup) {
+		if (this.eventsLogFile != null && this.logLevel >= 0)
+			logEvent(getRecurringDriftEvent(indexOfBestRanked, historyGroup, ensemblePos));
+		this.ensemble[ensemblePos].bkgLearner = ConceptHistory.copyConcept(historyGroup, indexOfBestRanked); 
+		this.newTopology = ConceptHistory.historyList.get(historyGroup).getTopology();  // then Pn = Ph  (line 33)
+	}
+
+	/***
+	 * Register background drift an update variables consequently
+	 * Pselected is a new P in case of background drift 
+	 */
+	protected void registerBkgDrift(int ensemblePos) {
+		// Register background drift
+		if (this.eventsLogFile != null && this.logLevel >= 0)
+			logEvent(getBkgDriftEvent(ensemblePos));
+		this.newTopology = initTopology(); // line 33
+	}
+
 	
-
-	// TODO: is this refresh functions needed at this level? 
-	//		this update / replace of topologies should be done by the upper class
-	private GNG refreshTopology(ArrayList<double[]> groupPrototypes, ArrayList<double[]> prototypes) {
-		GNG top = new GNG(this.GNGLambdaOption, this.alfaOption, this.maxAgeOption, this.constantOption,  
-				this.BepsilonOption, this.NepsilonOption); // line 2  // TODO
-		top.resetLearningImpl();
-		top = updateNewTopologyWithPrototypes(top, groupPrototypes); // feed first old prototypes from group
-		top = updateNewTopologyWithPrototypes(top, prototypes); // feed new topology to be merged
-		return top;
-	}
-
-	/** Batch methods */ 
-	// can this be only one function? maybe W can always be a list of arrays and Z can train GNG from arrays
-	public GNG updateNewTopology(GNG newTopology, ArrayList<Instance> W) {
-		for (Instance inst : W) {
-			updateTopologySingleInstance(newTopology, inst);
-		}
-		return newTopology; // if topology (Pc) is global, then we don´t need to return this here
-	}
-
-	public GNG updateNewTopologyWithPrototypes(GNG newTopology, ArrayList<double[]> prototypes) {
-		for (double[] prot : prototypes) {
-			updateTopologySingleInstance(newTopology, prototypeToArray(prot));
-		}
-		return newTopology; // if topology (Pc) is global, then we don´t need to return this here
-	}
-
-	/** */
-
-	private Instance prototypeToArray(double[] prot) {
-		// Temp = new Instances ((this.auxInst).dataset()); // aux var for conversion to
-		// instances
-		Instance inst = (Instance) this.auxInst.copy(); // TODO. is all this necessary? maybe I can create an aux
-														// function that trains GNG from arrays
-		for (int j = 0; j < prot.length; j++)
-			inst.setValue(j, prot[j]);
-		// inst.setClassValue(labels.get(i)); (This should not be necessary as in first
-		// instance we would also feed the class as part of the topologies,
-		// and we don´t need to train the ensemble with those prototypes as we do in
-		// iGNGSVM ).
-		// Temp.add(instS); // ADDING TO OBJECT INSTANCES (NEEDED HERE?)
-		return inst;
-	}
-
-	private void updateTopologySingleInstance(GNG newTopology, Instance inst) {
-		newTopology.trainOnInstanceImpl(inst); // TODO: Make sure that we send class as a feature, so everything
-												// makes sense after.
-
-		// Should we send instances until we reach the stopping criteria? TODO: Question
-		// to acervant
-		/*
-		 * for(int
-		 * j=0;newTopology.getCreadas()<newTopology.stoppingCriteriaOption.getValue();j+
-		 * +){ newTopology.trainOnInstanceImpl(inst); if(j+1==W.size()) j = -1; }
-		 */
-	}
-
+	///////////////////////////////////////
+	//
+	// IDENTIFICATION OF NEXT STATE
+	// -----------------------------------
 
 	/**
 	 * This method ranks all applicable base classifiers in the Concept History (CH)
 	 * It also selects the next classifier to be active, or it raises a false alarm
 	 * if the drift should be reconsidered.
 	 * 
+	 * It implements the lines 31-33 of the algorithm.
+	 *  line 31: Group for retrieval of next state
+	 *  lines 32-33: get topology of the group (methods 'registerDrift...') and retrieve the best classifier
+	 *  
 	 * -----------------------------------------------------------------------------------------------------------------
 	 * False alarms depend on the drift decision mechanism
 	 * -----------------------------------------------------------------------------------------------------------------
@@ -633,7 +764,7 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 	 * @param historyGroup
 	 * 
 	 */
-	public boolean switchActiveClassifier(int ensemblePos) { 
+	protected boolean switchActiveClassifier(int ensemblePos) { 
 	    int indexOfBestRanked = -1;
 		double errorOfBestRanked = -1.0;
 		HashMap<Integer, Double> ranking = null;
@@ -656,12 +787,12 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 			if (activeBetterThanBKGbaseClassifier(ensemblePos)) {
 				if (ranking.size() > 0 && !activeBetterThanCHbaseClassifier(errorOfBestRanked))
 					registerRecurringDrift(ensemblePos, indexOfBestRanked, historyGroup);
-				// false alarm if active classifier is still the best one and when there are no applicable concepts.
+				// False alarm if active classifier is still the best one and when there are no applicable concepts.
 				else return registerDriftFalseAlarm(ensemblePos);
 			} else {
 				if (ranking.size() > 0 && bkgBetterThanCHbaseClassifier(ensemblePos, errorOfBestRanked))
 					registerRecurringDrift(ensemblePos, indexOfBestRanked, historyGroup);
-				else registerBkgDrift(ensemblePos); // TODO: topology handling?
+				else registerBkgDrift(ensemblePos);
 			}
 		// Drift decision mechanism == 0 or 1 (in an edge case where the bkgclassifier is still NULL, we ignore the comparisons) (Case 1)
 		} else {
@@ -675,19 +806,11 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 
 	}
 
-	public ArrayList<double[]> instancesToArray(ArrayList<Instance> WInstances) { // TODO. 'Instances' instead of ArrayList
-		ArrayList<double[]> converted = new ArrayList<double[]>();
-		for (Instance inst : WInstances) {
-			converted.add(inst.toDoubleArray()); // TODO: Make sure that we are adding the class value as a feature in GNG
-		}
-		return converted;
-	}
-
 	/**
 	 * This method receives the current list of training examples received during
 	 * the warning window and checks what's the closest group.
 	 */
-	private int findGroup(ArrayList<double[]> arrayList) {
+	protected int findGroup(ArrayList<double[]> arrayList) {
 		double min = Double.MAX_VALUE;
 		double dist = 0;
 		int group = -1;
@@ -705,7 +828,8 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 			return -1;
 	}
 
-	private int createNewGroup(ArrayList<double[]> tmpPrototypes) {
+	/** Creation of new group and pushing of this to the CH */	
+	protected int createNewGroup(ArrayList<double[]> tmpPrototypes) {
 		int id = ConceptHistory.nextGroupID();
 		Group g = new Group(id, newTopology);
 		ConceptHistory.historyList.put(id, g); // the id is there twice to keep track of it and for testing purposes.
@@ -715,10 +839,8 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 	/**
 	 * This function computes the sum of the distances between every prototype in
 	 * the topology passed and the current list of instances during warning (W)
-	 * TODO: Make sure that we are adding the class value as a feature in GNG and 
-	 *         also make sure that the metric used here for calculating distances makes sense.
 	 */
-	private double getAbsoluteSumDistances(ArrayList<double[]> WInstances, ArrayList<double[]> topologyPrototypes) { 
+	protected double getAbsoluteSumDistances(ArrayList<double[]> WInstances, ArrayList<double[]> topologyPrototypes) { 
 		double totalDist = 0.0;
 
 		for (double[] inst : WInstances) {
@@ -727,36 +849,35 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 			}
 		} return totalDist;
 	}
-
-	// this.indexOriginal - pos of this classifier with active warning in ensemble
-	public HashMap<Integer, Double> rankConceptHistoryClassifiers(int ensemblePos, int historyGroup) {
+	
+    /**
+     * This function ranks the best concepts from a given group of the Concept History
+     * -----------------------------------
+	 * This only takes into consideration Concepts sent to the Concept History 
+	 * 	after the current classifier raised a warning (see this consideration in reset*)
+	 * 
+	 * The Concept History owns only one learner per historic concept. 
+	 * 	But each learner has a different window size and error.
+	 * 
+	 * this.indexOriginal - pos of this classifier with active warning in ensemble
+	 */
+	protected HashMap<Integer, Double> rankConceptHistoryClassifiers(int ensemblePos, int historyGroup) {
 		HashMap<Integer, Double> CHranking = new HashMap<Integer, Double>();
-		// Concept History owns only one learner per historic concept. But each learner
-		// saves all classifier's independent window size and priorEstimation in a
-		// HashMap.
+
 		for (Concept auxConcept : ConceptHistory.historyList.get(historyGroup).groupList.values())
-			// Only take into consideration Concepts sent to the Concept History after the
-			// current classifier raised a warning (see this consideration in reset*)
 			if (auxConcept.ConceptLearner.internalWindowEvaluator != null
-					&& auxConcept.ConceptLearner.internalWindowEvaluator.containsIndex(ensemblePos)) { // checking
-																										// indexOriginal
-																										// to verify
-																										// that it's an
-																										// applicable
-																										// concept
+					&& auxConcept.ConceptLearner.internalWindowEvaluator.containsIndex(ensemblePos)) {
 				CHranking.put(auxConcept.getHistoryIndex(),
 						((DynamicWindowClassificationPerformanceEvaluator) auxConcept.ConceptLearner.internalWindowEvaluator)
-								.getFractionIncorrectlyClassified(ensemblePos)); // indexOriginal refers to the
-																					// classifier we compare against. it
-																					// should be an applicable concept.
+								.getFractionIncorrectlyClassified(ensemblePos)); 
 			}
-
 		return CHranking;
 	}
 
-	// Aux method for getting the best classifier in a hashMap of (int
-	// classifierIndex, double averageErrorInWindow)
-	private Integer getMinKey(Map<Integer, Double> map) {
+	/** 
+	 * Aux method for getting the best classifier (used to rank concepts from a group in the CH)
+	 * */
+	protected Integer getMinKey(Map<Integer, Double> map) {
 		Integer minKey = null;
 		double minValue = Double.MAX_VALUE;
 		for (Integer key : map.keySet()) {
@@ -765,12 +886,10 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 				minValue = value;
 				minKey = key;
 			}
-		}
-		return minKey;
+		} return minKey;
 	}
 
-	// this.indexOriginal - pos of this classifier with active warning in ensemble
-	public boolean activeBetterThanBKGbaseClassifier(int ensemblePos) {
+	protected boolean activeBetterThanBKGbaseClassifier(int ensemblePos) {
 		// TODO? We may need to do use an internal evaluator for the active learner when driftDecisionMechanism==2.
 		// But the resizing mechanism may need to be different, or compare to the bkglearner.
 		/*
@@ -778,12 +897,12 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 		 * .getFractionIncorrectlyClassified(this.indexOriginal) <= ((DynamicWindowClassificationPerformanceEvaluator)
 		 * this.bkgLearner.internalWindowEvaluator).getFractionIncorrectlyClassified(this.bkgLearner.indexOriginal));
 		 */
-
-		return ((this.ensemble[ensemblePos].evaluator.getFractionIncorrectlyClassified() <= ((DynamicWindowClassificationPerformanceEvaluator)            this.ensemble[ensemblePos].bkgLearner.internalWindowEvaluator).getFractionIncorrectlyClassified(this.ensemble[ensemblePos].bkgLearner.indexOriginal)));
+		// this.indexOriginal - pos of this classifier with active warning in ensemble
+		return ((this.ensemble[ensemblePos].evaluator.getFractionIncorrectlyClassified() <= ((DynamicWindowClassificationPerformanceEvaluator) 
+				this.ensemble[ensemblePos].bkgLearner.internalWindowEvaluator).getFractionIncorrectlyClassified(this.ensemble[ensemblePos].bkgLearner.indexOriginal)));
 	}
 
-	// this.indexOriginal - pos of this classifier with active warning in ensemble
-	public boolean activeBetterThanCHbaseClassifier(double bestFromCH) {
+	protected boolean activeBetterThanCHbaseClassifier(double bestFromCH) {
 		// TODO? We may need to do use an internal evaluator for the active learner when driftDecisionMechanism==2.
 		// But the resizing mechanism may need to be different, or compare to the bkg learner.
 		/*
@@ -791,51 +910,22 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 		 * this.internalWindowEvaluator)
 		 * .getFractionIncorrectlyClassified(this.indexOriginal) <= bestFromCH);
 		 */
-
+		// this.indexOriginal - pos of this classifier with active warning in ensemble
 		return (this.evaluator.getFractionIncorrectlyClassified() <= bestFromCH);
 	}
 
-	// this.bkgLearner.indexOriginal - pos of bkg classifier if it becomes active in the ensemble (always same pos than the active)
-	public boolean bkgBetterThanCHbaseClassifier(int ensemblePos, double bestFromCH) {
+	protected boolean bkgBetterThanCHbaseClassifier(int ensemblePos, double bestFromCH) {
+		// this.bkgLearner.indexOriginal - pos of bkg classifier if it becomes active in the ensemble (always same pos than the active)
 		return (bestFromCH <= ((DynamicWindowClassificationPerformanceEvaluator) this.ensemble[ensemblePos].bkgLearner.internalWindowEvaluator)
 				.getFractionIncorrectlyClassified(this.ensemble[ensemblePos].bkgLearner.indexOriginal));
 
 	}
-
-	public boolean registerDriftFalseAlarm(int ensemblePos) {
-		// Register false alarm.
-		if (this.eventsLogFile != null && this.logLevel >= 0)
-			logEvent(getFalseAlarmEvent(ensemblePos));
-			
-		this.newTopology = null; // then Pn = Pc // TODO: confirm
-		// this.newPrototypes = getPrototypes(newTopology); // line 33 (TODO: confirm that this is not necessary)
-
-		// Update false alarm (the active classifier will remain being the same)
-		return true;
-	}
-
-	public void registerRecurringDrift(int ensemblePos, Integer indexOfBestRanked, int historyGroup) {
-		// Register recurring drift
-		if (this.eventsLogFile != null && this.logLevel >= 0)
-			logEvent(getRecurringDriftEvent(indexOfBestRanked, historyGroup, ensemblePos));
-
-		// Copy the best recurring learner from  CH. 
-		this.ensemble[ensemblePos].bkgLearner = ConceptHistory.copyConcept(historyGroup, indexOfBestRanked); 
-
-		// this.newTopology = ConceptHistory.getGroupTopology(historyGroup); // TODO:
-		// this.newPrototypes = getPrototypes(newTopology); // line 33 (TODO: confirm that this is not necessary)
-	}
-
-	public void registerBkgDrift(int ensemblePos) {
-		// Register background drift
-		if (this.eventsLogFile != null && this.logLevel >= 0)
-			logEvent(getBkgDriftEvent(ensemblePos));
-		// this.newTopology = new GNG(); // TODO
-		// newTopology.train(W); // TODO
-		// this.newPrototypes = getPrototypes(newTopology); // line 33 (TODO: confirm that this is not necessary)
-	}
-
-	// Auxiliar methods for logging events
+	
+	
+	///////////////////////////////////////
+	//
+	// LOGGING FUNCTIONS
+	// -----------------------------------
 
 	public Event getTrainExampleEvent(int indexOriginal) {
 		String[] eventLog = { String.valueOf(instancesSeen), "Train example", String.valueOf(indexOriginal), 
@@ -894,7 +984,8 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 		// System.out.println("DRIFT RESET IN MODEL #"+this.indexOriginal+" TO NEW BKG
 		// MODEL #"+this.bkgLearner.indexOriginal);
 
-		String[] eventLog = { String.valueOf(this.lastDriftOn), "DRIFT TO BKG MODEL", String.valueOf(indexOriginal),
+		String[] eventLog = { 
+				String.valueOf(this.lastDriftOn), "DRIFT TO BKG MODEL", String.valueOf(indexOriginal),
 				String.valueOf(this.evaluator.getPerformanceMeasurements()[1].getValue()),
 				this.warningOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""),
 				this.driftOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""),
@@ -966,107 +1057,34 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 		return (new Event(eventLog));
 	}
 
-	@Override
-	public double[] getVotesForInstance(Instance instance) {
-		Instance testInstance = instance.copy();
-		if (this.ensemble == null)
-			initEnsemble(testInstance);
-		DoubleVector combinedVote = new DoubleVector();
-
-		// TODO: Change this testing/predict function. Do we need voting? Bear in mind
-		// that at some point we'll have many classifiers.
-		for (int i = 0; i < this.ensemble.length; ++i) {
-			DoubleVector vote = new DoubleVector(this.ensemble[i].getVotesForInstance(testInstance));
-			if (vote.sumOfValues() > 0.0) {
-				vote.normalize();
-				double acc = this.ensemble[i].evaluator.getPerformanceMeasurements()[1].getValue();
-				if (!this.disableWeightedVote.isSet() && acc > 0.0) {
-					for (int v = 0; v < vote.numValues(); ++v) {
-						vote.setValue(v, vote.getValue(v) * acc);
-					}
-				}
-				combinedVote.addValues(vote);
-			}
-		}
-		return combinedVote.getArrayRef();
-	}
-
-	@Override
-	public boolean isRandomizable() {
-		return true;
-	}
-
-	@Override
-	public void getModelDescription(StringBuilder arg0, int arg1) {
-	}
-
-	@Override
-	protected Measurement[] getModelMeasurementsImpl() {
-		return null;
+	// General auxiliar methods for logging events
+	public Event getEventHeaders() {
+		String[] headers = { "instance_number", "event_type", "affected_position", // former 'classifier'
+				"voting_weight", // voting weight for the three that presents an event. 
+				"warning_setting", "drift_setting", "affected_classifier_created_on", "error_percentage",
+				"amount_of_classifiers", "amount_of_active_warnings", "classifiers_on_warning", "applicable_concepts",
+				"recurring_drift_to_history_id", "recurring_drift_to_classifier_created_on" };
+		return (new Event(headers));
 	}
 
 	/**
-	 * Incremental method
-	 * 
-	 * @return
+	 * Method to register events such as Warning and Drifts in the event log file.
 	 */
-	private GNG UpdateTopology(Instance inst) { 
-		this.topology.trainOnInstanceImpl(inst); // TODO: Make sure that we send class as a feature, so everything makes sense after.
-		return this.topology;
-	}
-
-	protected void initEnsemble(Instance instance) {
-
-		// Init the ensemble.
-		int ensembleSize = this.ensembleSizeOption.getValue();
-		this.ensemble = new EPCHBaseLearner[ensembleSize];
-		BasicClassificationPerformanceEvaluator classificationEvaluator = (BasicClassificationPerformanceEvaluator) 
-		      getPreparedClassOption(this.evaluatorOption);
-
-		// Only initialize Concept History if the handling of recurring concepts is enabled
-		if (!this.disableRecurringDriftDetectionOption.isSet()) {
-			ConceptHistory.lastID = 0;
-			ConceptHistory.historyList = new ConcurrentHashMap<Integer, Group>();
-			ConceptHistory.classifiersOnWarning = new ConcurrentHashMap<Integer, Boolean>();
-		}
-
-		try { // Start events logging and print headers
-			if (disableEventsLogFileOption.isSet()) {
-				eventsLogFile = null;
-			} else {
-				eventsLogFile = new PrintWriter(this.eventsLogFileOption.getValue());
-				logEvent(getEventHeaders());
-			}
-		} catch (FileNotFoundException e) {
-			e.printStackTrace();
-		}
-
-		Classifier learner = (Classifier) getPreparedClassOption(this.baseLearnerOption);
-		learner.resetLearning();
-
-		for (int i = 0; i < ensembleSize; ++i) {
-			this.ensemble[i] = new EPCHBaseLearner(i, (Classifier) learner.copy(),
-					(BasicClassificationPerformanceEvaluator) classificationEvaluator.copy(), this.instancesSeen,
-					!this.disableBackgroundLearnerOption.isSet(), // these are still needed con the level below
-					!this.disableDriftDetectionOption.isSet(), // these are still needed con the level below
-					// driftDecisionMechanismOption.getValue(),
-					// driftDetectionMethodOption,
-					// warningDetectionMethodOption,
-					false, // isbkglearner
-					!this.disableRecurringDriftDetectionOption.isSet(), false, // @suarezcetrulo : first classifier is
-																				// not old. An old classifier (retrieved
-																				// from the concept history).
-					new Window(this.defaultWindowOption.getValue(), this.windowIncrementsOption.getValue(),
-							this.minWindowSizeOption.getValue(), this.thresholdOption.getValue(),
-							this.rememberConceptWindowOption.isSet() ? true : false,
-							this.resizeAllWindowsOption.isSet() ? true : false, windowResizePolicyOption.getValue()),
-					null, // @suarezcetrulo : Windows start at NULL
-					// eventsLogFile,
-					// logLevelOption.getValue(),
-					warningWindowSizeThresholdOption.getValue() // ,
-			// new GNG()
-			);
-		}
+	public void logEvent(Event eventDetails) {
+		// Log processed instances, warnings and drifts in file of events
+		// # instance, event, affected_position, affected_classifier_id last-error, #classifiers;#active_warnings; classifiers_on_warning,
+		// 		applicable_concepts_from_here, recurring_drift_to_history_id, drift_to_classifier_created_on
+		eventsLogFile.println(String.join(";", eventDetails.getInstanceNumber(), eventDetails.getEvent(),
+				eventDetails.getAffectedPosition(), eventDetails.getVotingWeigth(), // of the affected position 
+				eventDetails.getWarningSetting(), // WARNING SETTING of the affected position. 
+				eventDetails.getDriftSetting(), // DRIFT SETTING of the affected position. 
+				eventDetails.getCreatedOn(), // new, affected_classifier_was_created_on
+				eventDetails.getLastError(), eventDetails.getNumberOfClassifiers(),
+				eventDetails.getNumberOfActiveWarnings(), // #active_warnings
+				eventDetails.getClassifiersOnWarning(), eventDetails.getListOfApplicableConcepts(), // applicable_concepts_from_here
+				eventDetails.getRecurringDriftToClassifierID(), // recurring_drift_to_history_id
+				eventDetails.getDriftToClassifierCreatedOn()));
+		eventsLogFile.flush();
 	}
 
 	/**
@@ -1102,86 +1120,57 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 
 		private void init(int indexOriginal, Classifier classifier,
 				BasicClassificationPerformanceEvaluator evaluatorInstantiated, long instancesSeen,
-				boolean useBkgLearner, boolean useDriftDetector, // int driftDecisionMechanism,
-				boolean isBackgroundLearner, boolean useRecurringLearner, boolean isOldLearner, Window windowProperties,
-				DynamicWindowClassificationPerformanceEvaluator internalEvaluator,
-				// PrintWriter eventsLogFile, int logLevel,
-				int warningWindowSizeThreshold) { // , GNG topology) {
+				boolean useBkgLearner, boolean useDriftDetector, boolean isBackgroundLearner, 
+				boolean useRecurringLearner, boolean isOldLearner, Window windowProperties,
+				DynamicWindowClassificationPerformanceEvaluator internalEvaluator, int warningWindowSizeThreshold) { 
 
 			this.indexOriginal = indexOriginal;
 			this.createdOn = instancesSeen;
-			// this.eventsLogFile = eventsLogFile;
-			// this.logLevel = logLevel;
 
 			this.classifier = classifier;
 			this.evaluator = evaluatorInstantiated;
-
-			this.useBkgLearner = useBkgLearner;
-			this.useRecurringLearner = useRecurringLearner;
+			
 			this.useDriftDetector = useDriftDetector;
-			// this.driftDecisionMechanism = driftDecisionMechanism;
-
+			this.warningWindowSizeThreshold = warningWindowSizeThreshold;
+			
 			this.isBackgroundLearner = isBackgroundLearner;
+			this.useBkgLearner = useBkgLearner;
 
-			if (useRecurringLearner) { // !this.disableRecurringDriftDetectionOption.isSet() ?
-				// Window params
-				this.windowProperties = windowProperties;
-				// Recurring drifts
-				this.isOldLearner = isOldLearner;
-				// only used in bkg and retrieved old classifiers
-				this.internalWindowEvaluator = internalEvaluator;
+			this.useRecurringLearner = useRecurringLearner;
+			if (useRecurringLearner) { 
+				this.windowProperties = windowProperties; // Window params
+				this.isOldLearner = isOldLearner; // Recurring drifts
+				this.internalWindowEvaluator = internalEvaluator; // only used in bkg and retrieved old classifiers
 			}
 
-			// for EPCH
-			this.warningWindowSizeThreshold = warningWindowSizeThreshold;
-			// this.topology = topology;
 		}
 
 		public boolean correctlyClassifies(Instance instance) {
 			return this.classifier.correctlyClassifies(instance);
 		}
 
-		// last inputs parameters added by @suarezcetrulo
-		public EPCHBaseLearner(int indexOriginal, Classifier classifier,
-				BasicClassificationPerformanceEvaluator evaluatorInstantiated, long instancesSeen,
-				boolean useBkgLearner, boolean useDriftDetector, // int driftDecisionMechanism,
-				boolean isBackgroundLearner, boolean useRecurringLearner, boolean isOldLearner, Window windowProperties,
-				DynamicWindowClassificationPerformanceEvaluator bkgInternalEvaluator,
-				// PrintWriter eventsLogFile, int logLevel,
-				int warningWindowSizeThreshold) { // , GNG topology) {
-			init(indexOriginal, classifier, evaluatorInstantiated, instancesSeen, useBkgLearner, useDriftDetector, // driftDecisionMechanism,
-					isBackgroundLearner, useRecurringLearner, isOldLearner, windowProperties, bkgInternalEvaluator, // eventsLogFile,
-																													// logLevel,
-					warningWindowSizeThreshold); // , topology);
+		public EPCHBaseLearner(int indexOriginal, Classifier classifier, BasicClassificationPerformanceEvaluator evaluatorInstantiated, 
+				long instancesSeen, boolean useBkgLearner, boolean useDriftDetector, boolean isBackgroundLearner, 
+				boolean useRecurringLearner, boolean isOldLearner, Window windowProperties,
+				DynamicWindowClassificationPerformanceEvaluator bkgInternalEvaluator, int warningWindowSizeThreshold) { 
+			init(indexOriginal, classifier, evaluatorInstantiated, instancesSeen, useBkgLearner, useDriftDetector, 
+					isBackgroundLearner, useRecurringLearner, isOldLearner, windowProperties, bkgInternalEvaluator, warningWindowSizeThreshold); 
 		}
 
         /**
-         * 
-         *  Consideration regarding tmpCopyOfClassifier: This classifier is added to the concept history, but it wont
-		 *   be considered by other classifiers on warning until their next warning. If it becomes necessary in terms of 
-		 *   implementation for this concept, to beconsidered immediately by the other examples in warning, 
-		 *   we could have a HashMap in ConceptHistory with a flag saying if a given ensembleIndexPos  
-		 *   needs to check the ConceptHistory again and add window sizes and priorError.
-		 * 
-		 *  The next lines of the algorithm are implemented:
-		 * 
-		 * - Line 24: creation of object for prototypes
-		 * - Line 25: 
+         *  This function resets the EPCH base classifiers
 		 * 
 		 *  The steps followed in this method can be seen below:
-		 * 
-		 * - Step 2.1 Move copy of active classifier made before warning to Concept History and reset.
+		 *  
+		 * - Step 2.1 Update window size in window properties depending on window size inheritance flag (entry parameter/Option)
+		 * - Step 2.3 Move copy of active classifier made before warning to Concept History and reset.
 		 *			  Its history ID will be the last one in the history (= size)
-		 * - Step 2.2 Update window size in window properties depending on window size inheritance flag (entry parameter/Option)
-		 * 
-         */
+		 */
 		public void reset() {
-
 			// System.out.println();
 			// System.out.println("-------------------------------------------------");
-			// System.out.println("RESET (WARNING OFF) IN MODEL #"+this.indexOriginal+".
-			// Warning flag status (activeClassifierPos, Flag):
-			// "+ConceptHistory.classifiersOnWarning);
+			// System.out.println("RESET (WARNING OFF) IN MODEL #"+this.indexOriginal+
+			// 	". Warning flag status (activeClassifierPos, Flag): "+ConceptHistory.classifiersOnWarning);
 			// System.out.println("-------------------------------------------------");
 			// System.out.println();
 			
@@ -1192,7 +1181,8 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 					ConceptHistory.classifiersOnWarning.put(this.indexOriginal, false);
 					if (ConceptHistory.historyList != null && ConceptHistory.historyList.size() > 0) {
 						for (int historyGroup : ConceptHistory.historyList.keySet()) {
-							// TODO: does this bit make sense? review. this use to be over only one list, asthere were not groups before.
+							// TODO: does this bit make sense? review. this use to be over only one list, as there were not groups before.
+							// TODO: Also, should we move this to the CH class?
 							for (Concept oldClassifier : ConceptHistory.historyList.get(historyGroup).groupList.values()) { // figure this out
 								if (oldClassifier.ConceptLearner.internalWindowEvaluator != null
 										&& oldClassifier.ConceptLearner.internalWindowEvaluator.containsIndex(this.indexOriginal))
@@ -1209,15 +1199,14 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 							: this.bkgLearner.windowProperties.windowDefaultSize));
 
 					// 2.2 Inherit window properties / clear internal evaluator
-					this.windowProperties = this.bkgLearner.windowProperties; // internalEvaluator shouldnt be inherited
+					this.windowProperties = this.bkgLearner.windowProperties; // internalEvaluator should't be inherited
 					// this.internalWindowEvaluator = null; // only a double check, as it should be always null in the active learner
 					assert this.internalWindowEvaluator == null; // if it crashes, add the line above. delete this one either way once tested.
 				}
-				// 2.3 New active classifier is the best retrieved old classifier / clear
-				// background learner
+				// 2.3 New active classifier is the best retrieved old classifier / clear background learner
 				this.classifier = this.bkgLearner.classifier;
 				this.evaluator = this.bkgLearner.evaluator;
-				this.createdOn = this.bkgLearner.createdOn; // createdOn = instancesSeen
+				this.createdOn = this.bkgLearner.createdOn;
 				this.bkgLearner = null;
 			} else {
 				this.classifier.resetLearning();
@@ -1231,7 +1220,18 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 														// instance (x, y).
 		}
 
-		// Creates BKG Classifier in warning window
+		public double[] getVotesForInstance(Instance instance) {
+			DoubleVector vote = new DoubleVector(this.classifier.getVotesForInstance(instance));
+			return vote.getArrayRef();
+		}
+
+		/** 
+		 * This method creates BKG Classifier in warning window 
+		 * The next steps are followed:
+		 *  Step 1 Create a new bkgTree classifier
+		 *  Step 2 Resets the evaluator
+		 *  Step 3 Create a new bkgLearner object
+		 * */
 		public void createBkgClassifier(long lastWarningOn) {
 		    
 			// 1 Create a new bkgTree classifier
@@ -1242,11 +1242,10 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 			BasicClassificationPerformanceEvaluator bkgEvaluator = (BasicClassificationPerformanceEvaluator) this.evaluator
 					.copy();
 			bkgEvaluator.reset();
-
 			// // System.out.println("------------------------------");
-			// // System.out.println("Create estimator for BKG classifier in position:
-			// "+this.indexOriginal);
-			// 3 Adding also internal evaluator (window) in bkgEvaluator (by @suarezcetrulo)
+			// // System.out.println("Create estimator for BKG classifier in position: "+this.indexOriginal);
+			
+			// Add also ab internal evaluator (window) in the bkgEvaluator
 			DynamicWindowClassificationPerformanceEvaluator bkgInternalWindowEvaluator = null;
 			if (this.useRecurringLearner) {
 				bkgInternalWindowEvaluator = new DynamicWindowClassificationPerformanceEvaluator(
@@ -1255,156 +1254,43 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 						this.windowProperties.getDecisionThreshold(), true, this.windowProperties.getResizingPolicy(),
 						this.indexOriginal, "created for BKG classifier in ensembleIndex #" + this.indexOriginal);
 				bkgInternalWindowEvaluator.reset();
-			}
-			// // System.out.println("------------------------------");
+			} // // System.out.println("------------------------------");
 
 			// 4 Create a new bkgLearner object
-			this.bkgLearner = new EPCHBaseLearner(indexOriginal, bkgClassifier, bkgEvaluator, lastWarningOn, // this.lastWarningOn
-																												// replaced
-																												// with
-																												// 'instancesSeen'
-					this.useBkgLearner, this.useDriftDetector, // this.driftDecisionMechanism,
-					true, this.useRecurringLearner, false, this.windowProperties, bkgInternalWindowEvaluator, // eventsLogFile,
-																												// logLevel,
-					this.warningWindowSizeThreshold); // , new GNG()); // new topology for bkg classifier
+			this.bkgLearner = new EPCHBaseLearner(indexOriginal, bkgClassifier, bkgEvaluator, lastWarningOn,
+					this.useBkgLearner, this.useDriftDetector, true, this.useRecurringLearner, false, 
+					this.windowProperties, bkgInternalWindowEvaluator, this.warningWindowSizeThreshold);
 		}
 
-		public double[] getVotesForInstance(Instance instance) {
-			DoubleVector vote = new DoubleVector(this.classifier.getVotesForInstance(instance));
-			return vote.getArrayRef();
-		}
+		/** 
+		* This method saves a backup of the active classifier that raised a warning 
+		* to be stored in the Concept History in case of drift.
+		*
+		* The next steps are followed:
+	    	*  Step 1 Update last error before warning of the active classifier. This error is the total fraction of examples 
+	    	* 		incorrectly classified this classifier was active until now.]
+		*  Step 2 Copy Base learner for Concept History in case of Drift and store it temporal object.
+		*	 First, the internal evaluator will be null. It doesn't get initialized till once in the Concept History 
+		*		and the first warning arises. See it in startWarningWindow
+		*  Step 3 Add the classifier accumulated error (from the start of the classifier) from the iteration before the warning
+		*  A simple concept to be stored in the concept history that doesn't have a running learner.
+		*  This doesn't train. It keeps the classifier as it was at the beginning of the training window to be stored in case of drift.
+		*/
+		public void saveCurrentConcept(long instancesSeen) {
+			this.lastError = this.evaluator.getFractionIncorrectlyClassified(); // step 1
 
-		// Saves a backup of the active classifier that raised a warning to be stored in
-		// the concept history in case of drift.
-		public void saveCurrentConcept(long instancesSeen) { // now instancesSeen is passed by parameter
-			// if(ConceptHistory.historyList != null) // System.out.println("CONCEPT HISTORY
-			// SIZE IS: "+ConceptHistory.historyList.size());
-
-			// 1 Update last error before warning of the active classifier
-			// This error is the total fraction of examples incorrectly classified since
-			// this classifier was active until now.
-			this.lastError = this.evaluator.getFractionIncorrectlyClassified();
-
-			// 2 Copy Base learner for Concept History in case of Drift and store it on
-			// temporal object.
-			// First, the internal evaluator will be null.
-			// It doesn't get initialized till once in the Concept History and the first
-			// warning arises. See it in startWarningWindow
-			EPCHBaseLearner tmpConcept = new EPCHBaseLearner(this.indexOriginal, this.classifier.copy(),
+			EPCHBaseLearner tmpConcept = new EPCHBaseLearner(this.indexOriginal, this.classifier.copy(), // step 2
 					(BasicClassificationPerformanceEvaluator) this.evaluator.copy(), this.createdOn, this.useBkgLearner,
-					this.useDriftDetector, // this.driftDecisionMechanism,
-					// this.driftOption, this.warningOption,
-					true, useRecurringLearner, true, this.windowProperties.copy(), null, // eventsLogFile, logLevel,
-					this.warningWindowSizeThreshold); // , this.topology);
-
+					this.useDriftDetector, true, useRecurringLearner, true, this.windowProperties.copy(), null, 
+					this.warningWindowSizeThreshold);
 			this.tmpCopyOfClassifier = new Concept(tmpConcept, this.createdOn,
 					this.evaluator.getPerformanceMeasurements()[0].getValue(), instancesSeen);
 
-			// 3 Add the classifier accumulated error (from the start of the classifier)
-			// from the iteration before the warning
-			this.tmpCopyOfClassifier.setErrorBeforeWarning(this.lastError);
-			// A simple concept to be stored in the concept history that doesn't have a
-			// running learner.
-			// This doesn't train. It keeps the classifier as it was at the beginning of the
-			// training window to be stored in case of drift.
-		}
-
-	}
-
-	public static class Group {
-
-		// params
-		int id;
-		GNG topology;
-		public ConcurrentHashMap<Integer, Concept> groupList; // List of concepts per group
-
-		public Group(int id, GNG top) {
-			this.id = id; // nextID();
-			this.topology = top;
-			this.groupList = new ConcurrentHashMap<Integer, Concept>();
-		}
-
-		/*
-		 * public int nextID() { return ConceptHistory.lastGroupID++; }
-		 */
-
-		public EPCHBaseLearner copyConcept(int key) {
-			EPCHBaseLearner aux = groupList.get(key).getBaseLearner();
-			return aux;
-		}
-
-		// Getters
-		public int getID() {
-			return id;
-		}
-
-		public ArrayList<double[]> getTopologyPrototypes() {
-			return topology.getPrototypes(); // TODO: IMP. Check that this conversion is accurate (in method of class
-												// GNG)
-		}
-		
-		public void setTopology(GNG top) {
-			this.topology = top;
-		}
-
-	}
-
-	/***
-	 * Static and concurrent for all DTs that run in parallel Concept_history =
-	 * (list of concept_representations)
-	 */
-	public static class ConceptHistory {
-
-		// Concurrent Concept History List
-		public static ConcurrentHashMap<Integer, Group> historyList; // now this is a list of groups
-		public static int lastID = 0;
-		public static int lastGroupID = 0;
-
-		// List of ensembles with an active warning used as to determine if the history
-		// list evaluators should be in use
-		public static ConcurrentHashMap<Integer, Boolean> classifiersOnWarning; // = new
-																				// ConcurrentHashMap<Integer,Boolean>
-																				// ();
-
-		/*
-		 * public static EPCHBaseLearner extractConcept(int key) { // now the concepts
-		 * are copied and not extracted EPCHBaseLearner aux =
-		 * historyList.get(key).getBaseLearner(); historyList.remove(key); return aux; }
-		 */
-
-		public static EPCHBaseLearner copyConcept(int group, int key) {
-			EPCHBaseLearner aux = historyList.get(group).copyConcept(key);
-			return aux;
-		}
-
-		public static int getNumberOfActiveWarnings() {
-			int count = 0;
-			for (Boolean value : classifiersOnWarning.values())
-				if (value)
-					count++;
-			return count;
-		}
-
-		/*
-		 * public Set<Entry<Integer,Concept>> getConceptHistoryEntrySet() { return
-		 * historyList.entrySet(); }
-		 */
-
-		// Getters
-		public static int nextID() {
-			return lastID++;
-		}
-
-		public static int nextGroupID() {
-			return lastGroupID++;
+			this.tmpCopyOfClassifier.setErrorBeforeWarning(this.lastError); // step 3
 		}
 	}
 
-	// Concept_representation = (classifier, last_weight, last_used_timestamp,
-	// conceptual_vector)
-	public class Concept {
-
-		// Concept attributes
+	protected final class Concept {
 		protected int ensembleIndex; // position that it had in the ensemble. for reference only.
 		protected int historyIndex; // id in concept history
 
@@ -1451,12 +1337,82 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 			this.errorBeforeWarning = value;
 		}
 	}
+	
+	protected static class Group {
+		int id;
+		GNG topology;
+		public ConcurrentHashMap<Integer, Concept> groupList; // List of concepts per group
 
-	// Window-related parameters for classifier internal comparisons during the
-	// warning window
-	public class Window {
+		public Group(int id, GNG top) {
+			this.id = id; // nextID();
+			this.topology = top;
+			this.groupList = new ConcurrentHashMap<Integer, Concept>();
+		}
 
-		// Window properties
+		public EPCHBaseLearner copyConcept(int key) {
+			EPCHBaseLearner aux = groupList.get(key).getBaseLearner();
+			return aux;
+		}
+
+		// Getters
+		public int getID() {
+			return id;
+		}
+
+		public ArrayList<double[]> getTopologyPrototypes() {
+			return topology.getPrototypes(); // TODO: IMP. Check that this conversion is accurate (in class GNG)
+		}
+		
+		public void setTopology(GNG top) {
+			this.topology = top;
+		}
+		
+		public GNG getTopology() {
+			return this.topology;
+		}
+
+	}
+
+	/***
+	 * Static and concurrent for all DTs that run in parallel Concept_history =
+	 * (list of concept_representations)
+	 */
+	protected static class ConceptHistory {
+
+		// Concurrent Concept History List
+		public static ConcurrentHashMap<Integer, Group> historyList; // now this is a list of groups
+		public static int lastID = 0;
+		public static int lastGroupID = 0;
+
+		// List of ensembles with an active warning used as to determine if the history
+		// list evaluators should be in use
+		public static ConcurrentHashMap<Integer, Boolean> classifiersOnWarning; 
+		
+		public static EPCHBaseLearner copyConcept(int group, int key) {
+			EPCHBaseLearner aux = historyList.get(group).copyConcept(key);
+			return aux;
+		}
+
+		public static int getNumberOfActiveWarnings() {
+			int count = 0;
+			for (Boolean value : classifiersOnWarning.values())
+				if (value)
+					count++;
+			return count;
+		}
+
+		// Getters
+		public static int nextID() {
+			return lastID++;
+		}
+
+		public static int nextGroupID() {
+			return lastGroupID++;
+		}
+	}
+
+	/** Window-related parameters for classifier internal comparisons during the warning window */
+	protected class Window {
 		int windowSize;
 		int windowDefaultSize;
 		int windowIncrements;
@@ -1469,8 +1425,8 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 		public Window(int windowSize, int windowIncrements, int minWindowSize, double decisionThreshold,
 				boolean rememberWindowSize, boolean backgroundDynamicWindowsFlag, int windowResizePolicy) {
 			this.windowSize = windowSize;
-			this.windowDefaultSize = windowSize; // the default size of a window could change overtime if there is
-													// window size inheritance enabled
+			// the default size of a window could change overtime if there is window size inheritance enabled
+			this.windowDefaultSize = windowSize; 
 			this.windowIncrements = windowIncrements;
 			this.minWindowSize = minWindowSize;
 			this.decisionThreshold = decisionThreshold;
@@ -1550,10 +1506,8 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 
 	}
 
-	// Object for events so the code is cleaner
+	/** Object for events so the code is cleaner */
 	public class Event {
-
-		// Fields for events log
 		String instanceNumber;
 		String event;
 		String affectedPosition;
@@ -1702,46 +1656,4 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 		}
 
 	}
-
-	// General auxiliar methods for logging events
-
-	public Event getEventHeaders() {
-
-		String[] headers = { "instance_number", "event_type", "affected_position", // former 'classifier'
-				"voting_weight", // voting weight for the three that presents an event. new 07/07/2018
-				"warning_setting", "drift_setting", "affected_classifier_created_on", "error_percentage",
-				"amount_of_classifiers", "amount_of_active_warnings", "classifiers_on_warning", "applicable_concepts",
-				"recurring_drift_to_history_id", "recurring_drift_to_classifier_created_on" };
-
-		return (new Event(headers));
-
-	}
-
-	/**
-	 * Method to register events such as Warning and Drifts in the event log file.
-	 */
-	public void logEvent(Event eventDetails) {
-		// Log processed instances, warnings and drifts in file of events
-		// # instance, event, affected_position, affected_classifier_id last-error,
-		// #classifiers;#active_warnings; classifiers_on_warning,
-		// applicable_concepts_from_here, recurring_drift_to_history_id,
-		// drift_to_classifier_created_on
-		eventsLogFile.println(String.join(";", eventDetails.getInstanceNumber(), eventDetails.getEvent(),
-				eventDetails.getAffectedPosition(), eventDetails.getVotingWeigth(), // of the affected position (this is
-																					// as represented in
-																					// getVotesForInstance for the
-																					// global ensemble), // new
-																					// 07/07/2018
-				eventDetails.getWarningSetting(), // WARNING SETTING of the affected position. new 07/07/2018
-				eventDetails.getDriftSetting(), // DRIFT SETTING of the affected position. new 07/07/2018
-				eventDetails.getCreatedOn(), // new, affected_classifier_was_created_on
-				eventDetails.getLastError(), eventDetails.getNumberOfClassifiers(),
-				eventDetails.getNumberOfActiveWarnings(), // #active_warnings
-				eventDetails.getClassifiersOnWarning(), eventDetails.getListOfApplicableConcepts(), // applicable_concepts_from_here
-				eventDetails.getRecurringDriftToClassifierID(), // recurring_drift_to_history_id
-				eventDetails.getDriftToClassifierCreatedOn()));
-		eventsLogFile.flush();
-
-	}
-
 }
