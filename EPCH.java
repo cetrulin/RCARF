@@ -135,26 +135,26 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 			"0 does not take into account the performance active base classifier explicitely, at the time of the drift; "  + 
 			"1 takes into consideration active classifiers", 2, 0, 2);
 
-	public IntOption warningWindowSizeThresholdOption = new IntOption("WarningWindowSizeThreshold", 'h',
+	public IntOption warningWindowSizeThresholdOption = new IntOption("WarningWindowSizeThreshold", 'ñ',
 			"Threshold for warning window size that defines a false a alarm.", 300, 1, Integer.MAX_VALUE);
 
-	public FloatOption distThresholdOption = new FloatOption("distThresholdOption", 'x',
+	public FloatOption distThresholdOption = new FloatOption("distThresholdOption", 'ç',
 			"Max distance allowed between topologies to be considered part of the same group.", 100000, 0, Float.MAX_VALUE);
 	
-	public FlagOption resetTopologyInMerginOption = new FlagOption("resetTopologyInMergin", 'Y', 
+	public FlagOption resetTopologyInMerginOption = new FlagOption("resetTopologyInMergin", '€', 
 			"Should the topology be trained from scratch after a drift signal is raised?");
 	
 	// Options for the topology: TODO (these should come from a meta class)
-	public IntOption topologyLambdaOption = new IntOption("lambda", 'l', "Topology Lambda", 100);
+	public IntOption topologyLambdaOption = new IntOption("topologyLambda", 'o', "Topology Lambda", 100);
 	public IntOption maxAgeOption = new IntOption("maxAge", 'm', "MaximumAge", 200);
-	public FloatOption alfaOption = new FloatOption("alfa", 'a', "Alfa", 0.5);
-	public FloatOption constantOption = new FloatOption("d", 'd', "d", 0.995);
-	public FloatOption BepsilonOption = new FloatOption("epsilonB", 'Z', "EpsilonB", 0.2);
-	public FloatOption NepsilonOption = new FloatOption("epsilonN", 'K', "EpsilonN", 0.006);
-	public IntOption stoppingCriteriaOption = new IntOption("stoppingCriteria", 'c', "Stopping criteria", 100);
+	public FloatOption alfaOption = new FloatOption("alfa", '$', "Alfa", 0.5);
+	public FloatOption constantOption = new FloatOption("d", '&', "d", 0.995);
+	public FloatOption BepsilonOption = new FloatOption("epsilonB", '@', "EpsilonB", 0.2);
+	public FloatOption NepsilonOption = new FloatOption("epsilonN", 'j', "EpsilonN", 0.006);
+	public IntOption stoppingCriteriaOption = new IntOption("stoppingCriteria", 'v', "Stopping criteria", 100);
 	// public FloatOption stopPercentageOption = new FloatOption("stopPercentageOption", 'P', 
 	//		"Stopping criteria as percentage (if 0, the static stopping criteria is )", 0, 0, 100.0);
-	public FlagOption classNotAsAnAttributeInTopologyOption = new FlagOption("classNotAsAnAttributeInTopology", 'b',
+	public FlagOption classNotAsAnAttributeInTopologyOption = new FlagOption("classNotAsAnAttributeInTopology", 'q',
 			"Should the class be considered as a feature in the topology?");
 	//////////
 	
@@ -168,10 +168,6 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 	// Warning and Drifts
 	public long lastDriftOn;
 	public long lastWarningOn;
-
-	// The drift and warning object parameters.
-	protected ClassOption driftOption;
-	protected ClassOption warningOption;
 
 	// Drift and warning detection
 	protected ChangeDetector driftDetectionMethod;
@@ -217,12 +213,12 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 
 		// Init Drift Detector
 		if (!this.disableDriftDetectionOption.isSet()) {
-			this.driftDetectionMethod = ((ChangeDetector) getPreparedClassOption(this.driftOption)).copy();
+			this.driftDetectionMethod = ((ChangeDetector) getPreparedClassOption(this.driftDetectionMethodOption)).copy();
 		}
 
 		// Init Drift Detector for Warning detection.
 		// if (!this.disableBackgroundLearnerOption.isSet()) {
-		this.warningDetectionMethod = ((ChangeDetector) getPreparedClassOption(this.warningOption)).copy();
+		this.warningDetectionMethod = ((ChangeDetector) getPreparedClassOption(this.warningDetectionMethodOption)).copy();
 		this.W = new Instances();  // list of training examples during warning window.
 	    //}
 	}
@@ -374,7 +370,8 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 		// Only initialize the Concept History if the handling of recurring concepts is enabled
 		if (!this.disableRecurringDriftDetectionOption.isSet()) CH = new ConceptHistory(this.distThresholdOption.getValue());
 		//if (!this.disableBackgroundLearnerOption.isSet()) // (EPCH needs warnings to be enabled)
-		this.W = new Instances(); 
+		this.W = (Instances) instance.copy().dataset(); 
+		this.W.delete();		
 
 		try { // Start events logging and print headers
 			if (disableEventsLogFileOption.isSet()) {
@@ -396,13 +393,14 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 					// !this.disableBackgroundLearnerOption.isSet(), // these are still needed con the level below (now this is true in EPCH)
 					!this.disableDriftDetectionOption.isSet(), // these are still needed con the level below
 					false, // isbkglearner
-					!this.disableRecurringDriftDetectionOption.isSet(), false, // first classifier is not in the CH. 
+					!this.disableRecurringDriftDetectionOption.isSet(), 
+					false, // first classifier is not in the CH. 
 					new Window(this.defaultWindowOption.getValue(), this.windowIncrementsOption.getValue(),
 							this.minWindowSizeOption.getValue(), this.thresholdOption.getValue(),
 							this.rememberConceptWindowOption.isSet() ? true : false,
 							this.resizeAllWindowsOption.isSet() ? true : false, windowResizePolicyOption.getValue()),
 					null, // Windows start at NULL
-					warningWindowSizeThresholdOption.getValue());
+					this.warningWindowSizeThresholdOption.getValue());
 		}
 	}
 
@@ -453,10 +451,10 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 		this.warningDetectionMethod.input(correctlyClassifies ? 0 : 1); 
 		
 		// Step 2: Check for False Alarm case 2 (Lines 7-9)
-		if (this.W.size() >= warningWindowSizeThresholdOption.getValue()) resetWarningWindow(ensemblePos); // Line 8
+		if (this.W.size() >= this.warningWindowSizeThresholdOption.getValue()) resetWarningWindow(ensemblePos); // Line 8
 		 		
 		// Step 3: Either warning window training/buffering or topology update (Lines 10-15)
-		if (this.W.size() >= 1 && this.W.size() < warningWindowSizeThresholdOption.getValue()) { // && 
+		if (this.W.size() >= 1 && this.W.size() < this.warningWindowSizeThresholdOption.getValue()) { // && 
 				// this.ensemble[ensemblePos].bkgLearner != null) { // TODO: check condition and test below that then W is in that range, bkgLearner != null
 			if (this.ensemble[ensemblePos].bkgLearner != null) // this may not be necessary. to confirm with the test from below
 				this.ensemble[ensemblePos].bkgLearner.classifier.trainOnInstance(instance); // Line 11
@@ -475,7 +473,7 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 		this.ensemble[ensemblePos].bkgLearner = null; // Lines 8 and 19
 		this.ensemble[ensemblePos].internalWindowEvaluator = null;
 		this.ensemble[ensemblePos].tmpCopyOfClassifier = null;
-		this.warningDetectionMethod = ((ChangeDetector) getPreparedClassOption(this.warningOption)).copy(); // restart warning 
+		this.warningDetectionMethod = ((ChangeDetector) getPreparedClassOption(this.warningDetectionMethodOption)).copy(); // restart warning 
 		this.W.delete(); // Lines 8 and 19 (it also initializes the object W)
 		this.CH.decreaseNumberOfWarnings(ensemblePos); // update applicable concepts
 	}
@@ -838,8 +836,8 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 	public Event getTrainExampleEvent(int indexOriginal) {
 		String[] eventLog = { String.valueOf(instancesSeen), "Train example", String.valueOf(indexOriginal), 
 				String.valueOf(this.ensemble[indexOriginal].evaluator.getPerformanceMeasurements()[1].getValue()),
-				this.warningOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""),
-				this.driftOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""),
+				this.warningDetectionMethodOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""),
+				this.driftDetectionMethodOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""),
 				String.valueOf(this.instancesSeen), String.valueOf(this.ensemble[indexOriginal].evaluator.getFractionIncorrectlyClassified()),
 				String.valueOf(!this.disableRecurringDriftDetectionOption.isSet() ? this.CH.getWarnings().size(): "N/A"),
 				String.valueOf(!this.disableRecurringDriftDetectionOption.isSet() ? this.CH.getNumberOfActiveWarnings(): "N/A"),
@@ -863,8 +861,8 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 		String[] warningLog = { String.valueOf(this.lastWarningOn), "WARNING-START", // event
 				String.valueOf(indexOriginal),
 				String.valueOf(this.ensemble[indexOriginal].evaluator.getPerformanceMeasurements()[1].getValue()),
-				this.warningOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""),
-				this.driftOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""),
+				this.warningDetectionMethodOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""),
+				this.driftDetectionMethodOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""),
 				String.valueOf(this.instancesSeen), String.valueOf(this.ensemble[indexOriginal].evaluator.getFractionIncorrectlyClassified()),
 				String.valueOf(!this.disableRecurringDriftDetectionOption.isSet() ? this.CH.getWarnings().size(): "N/A"),
 				String.valueOf(!this.disableRecurringDriftDetectionOption.isSet() ? this.CH.getNumberOfActiveWarnings(): "N/A"),
@@ -881,8 +879,8 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 		String[] eventLog = { 
 				String.valueOf(this.lastDriftOn), "DRIFT TO BKG MODEL", String.valueOf(indexOriginal),
 				String.valueOf(this.ensemble[indexOriginal].evaluator.getPerformanceMeasurements()[1].getValue()),
-				this.warningOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""),
-				this.driftOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""),
+				this.warningDetectionMethodOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""),
+				this.driftDetectionMethodOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""),
 				String.valueOf(this.instancesSeen), String.valueOf(this.ensemble[indexOriginal].evaluator.getFractionIncorrectlyClassified()),
 				String.valueOf(!this.disableRecurringDriftDetectionOption.isSet() ? this.CH.getWarnings().size(): "N/A"),
 				String.valueOf(!this.disableRecurringDriftDetectionOption.isSet() ? this.CH.getNumberOfActiveWarnings(): "N/A"),
@@ -898,8 +896,8 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 		// +this.bkgLearner.indexOriginal);
 		String[] eventLog = { String.valueOf(this.lastDriftOn), "RECURRING DRIFT", String.valueOf(indexOriginal),
 				String.valueOf(this.ensemble[indexOriginal].evaluator.getPerformanceMeasurements()[1].getValue()),
-				this.warningOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""),
-				this.driftOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""),
+				this.warningDetectionMethodOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""),
+				this.driftDetectionMethodOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""),
 				String.valueOf(this.instancesSeen), String.valueOf(this.ensemble[indexOriginal].evaluator.getFractionIncorrectlyClassified()),
 				String.valueOf(!this.disableRecurringDriftDetectionOption.isSet() ? this.CH.getWarnings().size(): "N/A"),
 				String.valueOf(!this.disableRecurringDriftDetectionOption.isSet() ? this.CH.getNumberOfActiveWarnings(): "N/A"),
@@ -915,8 +913,8 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 		String[] eventLog = { String.valueOf(this.lastDriftOn), "FALSE ALARM ON DRIFT SIGNAL",
 				String.valueOf(indexOriginal),
 				String.valueOf(this.ensemble[indexOriginal].evaluator.getPerformanceMeasurements()[1].getValue()),
-				this.warningOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""),
-				this.driftOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""),
+				this.warningDetectionMethodOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""),
+				this.driftDetectionMethodOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""),
 				String.valueOf(this.instancesSeen), String.valueOf(this.ensemble[indexOriginal].evaluator.getFractionIncorrectlyClassified()),
 				String.valueOf(!this.disableRecurringDriftDetectionOption.isSet() ? this.CH.getWarnings().size(): "N/A"),
 				String.valueOf(!this.disableRecurringDriftDetectionOption.isSet() ? this.CH.getNumberOfActiveWarnings(): "N/A"),
