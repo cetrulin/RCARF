@@ -71,8 +71,8 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 	public ClassOption baseLearnerOption = new ClassOption("baseLearner", 'l', "Classifier to train.", Classifier.class,
 			"trees.HoeffdingTree -e 1000000 -g 200 -c 0"); // default params for hoeffding trees
 
-	public IntOption ensembleSizeOption = new IntOption("ensembleSize", 's', "The number of trees.", 1, 1,
-			Integer.MAX_VALUE);
+	public IntOption ensembleSizeOption = new IntOption("ensembleSize", 's', 
+			"[HARDCODED TO 1 BY NOW EVEN IF IT CHANGES] The number of learners.", 1, 1, Integer.MAX_VALUE);
 
 	public FloatOption lambdaOption = new FloatOption("lambda", 'a', "The lambda parameter for bagging.", 6.0, 1.0,
 			Float.MAX_VALUE);
@@ -239,6 +239,7 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 	 * - 2 Update error in active classifier.
 	 * - 3 Update error in background classifier's internal evaluator. 
 	 * - 4 Train each base classifier, orchestrating drifts and switching of classifiers.
+	 * - 5 update the topology (this is done as long as there is no active warnings).
 	 * 
 	 * The method below implements the following lines of the algorithm:
 	 * - Line 1: start topology
@@ -265,23 +266,30 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 			this.CH.updateHistoryErrors(instance);
 			
 		} // Steps 2-4: Iterate through the ensemble for following steps (active and bkg classifiers)
-		for (int i = 0; i < this.ensemble.length; i++) {
-			DoubleVector vote = new DoubleVector(this.ensemble[i].getVotesForInstance(instance));
-			InstanceExample example = new InstanceExample(instance);
-			this.ensemble[i].evaluator.addResult(example, vote.getArrayRef()); // Step 2: Testing in active classifier
+		// for (int lPos = 0; i < this.ensemble.length; i++) {  // TODO. the design will change when supporting many active classifiers
+		int lPos = 0;  // learner position in an ensemble 
+		DoubleVector vote = new DoubleVector(this.ensemble[lPos].getVotesForInstance(instance));
+		InstanceExample example = new InstanceExample(instance);
+		this.ensemble[lPos].evaluator.addResult(example, vote.getArrayRef()); // Step 2: Testing in active classifier
 
-			if (!disableRecurringDriftDetectionOption.isSet()) { // Step 3: Update error in background classifier's
-				if (this.ensemble[i].bkgLearner != null && this.ensemble[i].bkgLearner.internalWindowEvaluator != null
-						&& this.ensemble[i].bkgLearner.internalWindowEvaluator
-								.containsIndex(this.ensemble[i].bkgLearner.indexOriginal)) {
-					DoubleVector bkgVote = new DoubleVector(this.ensemble[i].bkgLearner.getVotesForInstance(instance));
-					
-					// Update both active and bkg classifier internal evaluators
-					this.ensemble[i].bkgLearner.internalWindowEvaluator.addResult(example, bkgVote.getArrayRef());
-					this.ensemble[i].internalWindowEvaluator.addResult(example, vote.getArrayRef());
-				}
-			} trainBaseClassifierOnInstance(i, instance, this.instancesSeen);  // Step 4: Train each base classifier
-		} 
+		if (!disableRecurringDriftDetectionOption.isSet()) { // Step 3: Update error in background classifier's
+			if (this.ensemble[lPos].bkgLearner != null && this.ensemble[lPos].bkgLearner.internalWindowEvaluator != null
+					&& this.ensemble[lPos].bkgLearner.internalWindowEvaluator
+							.containsIndex(this.ensemble[lPos].bkgLearner.indexOriginal)) {
+				DoubleVector bkgVote = new DoubleVector(this.ensemble[lPos].bkgLearner.getVotesForInstance(instance));
+				
+				// Update both active and bkg classifier internal evaluators
+				this.ensemble[lPos].bkgLearner.internalWindowEvaluator.addResult(example, bkgVote.getArrayRef());
+				this.ensemble[lPos].internalWindowEvaluator.addResult(example, vote.getArrayRef());
+			}
+		} trainBaseClassifierOnInstance(lPos, instance, this.instancesSeen);  // Step 4: Train each base classifier
+		// }  // TODO. the design will change when supporting many active classifiers (read below)
+		// TODO: uncomment the line below and comment it out in trainBaseClassifierOnInstance()
+		// this.topology.trainOnInstanceImpl(instance);  // Step 5 (Lines 13-15)
+		// TODO: topology should always be at this level
+		// also this shouldn't be done if there are active warnings, so these should also be moved to these level
+		// When supporting many active classifiers, we may need to have a learner for warning and drift detection.
+		// this learner would not be affected by any bagging and so on, it may be taken into account for votes or not (TBD).
 	}
 	
 	
@@ -316,6 +324,7 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 			// if (!this.disableBackgroundLearnerOption.isSet()) // in EPCH warning detection should always be active
 			detectWarning(ensemblePos, instance, correctlyClassifies); //else 
 			this.topology.trainOnInstanceImpl(instance);  // Step 2.1.1 (Lines 13-15)
+			// TODO: this design won't work for multiple classifiers, the training of the topology should be at the upper level
 			// TODO: topology should not be in this function. 
 			// it should be in the previous one as otherwise we'll send X copies of the same instance each time, 
 			// depending on the number of classifiers
@@ -364,7 +373,7 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 	protected void initEnsemble(Instance instance) {
 
 		// Init the ensemble.
-		int ensembleSize = this.ensembleSizeOption.getValue();
+		int ensembleSize = 1; // this.ensembleSizeOption.getValue(); TODO: undo this once the design is ready for many active learners.
 		this.ensemble = new EPCHBaseLearner[ensembleSize];
 		BasicClassificationPerformanceEvaluator classificationEvaluator = (BasicClassificationPerformanceEvaluator) 
 		      getPreparedClassOption(this.evaluatorOption);
