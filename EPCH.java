@@ -29,6 +29,8 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedList;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -366,10 +368,17 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 	}
 
 	@Override
-	protected Measurement[] getModelMeasurementsImpl() {
-		return null;
-	}
-
+    protected Measurement[] getModelMeasurementsImpl() {
+		// TODO. add the same to RCARF, getting a sum of all warnings/drifts in the ensemble 
+		// (just add a loop through ensemble[i].numberOfDriftsDetected) in rcarf
+        List<Measurement> measurementList = new LinkedList<Measurement>();
+        measurementList.add(new Measurement("Change detected", this.numberOfDriftsDetected));
+        measurementList.add(new Measurement("Warning detected", this.numberOfWarningsDetected));
+        // this.numberOfDriftsDetected = 0;
+        // this.numberOfWarningsDetected = 0;
+        return measurementList.toArray(new Measurement[measurementList.size()]);
+    }
+	
 	protected void initEnsemble(Instance instance) {
 
 		// Init the ensemble.
