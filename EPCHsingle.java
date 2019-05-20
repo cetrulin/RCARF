@@ -47,6 +47,7 @@ import moa.classifiers.igngsvm.gng.GNG;
 import moa.classifiers.igngsvm.gng.GUnit;
 import moa.classifiers.meta.EPCH.Concept;
 import moa.classifiers.meta.EPCH.EPCHBaseLearner;
+import moa.classifiers.meta.EPCH.Topology;
 import moa.classifiers.meta.EPCH.Window;
 import moa.evaluation.BasicClassificationPerformanceEvaluator;
 import moa.evaluation.DynamicWindowClassificationPerformanceEvaluator;
@@ -678,28 +679,10 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 
 	}
 
-	protected Topology trainNewWithOldTopology(Instances instances, Instances instances2) {
-		Topology top = new Topology(this.topologyLambdaOption, this.alfaOption, this.maxAgeOption,
-				this.constantOption, this.BepsilonOption, this.NepsilonOption, this.classNotAsAnAttributeInTopologyOption); // line 2
-		top.resetLearningImpl();
-		
-		top = updateExtraTopology(top, instances); // feed first old prototypes from group
-		top = updateExtraTopology(top, instances2); // feed new topology to be merged
-		return top;
-	}
+	protected Topology mergeTopologies(Topology CHtop) {		
 
-	/**
-	 * The next line of the algorithm EPCH is implemented by this method.
-	 * line 30: Update topology on Gc
-	 * */
-	protected Topology mergeTopologies(Topology CHtop) {
-		if (this.resetTopologyInMerginOption.isSet()) {
-			// way 1: old prototypes will be given less importance in this merging mechanism
-			return trainNewWithOldTopology(CHtop.getPrototypes(), this.topology.getPrototypes());
-		} else {
-			// way 2: old prototypes may be more important here due to the way how GNG works
-			return updateExtraTopology(CHtop, this.topology.getPrototypes());
-		}
+		// way 2: old prototypes may be more important here due to the way how GNG works
+		return updateExtraTopology(CHtop, this.topology.getPrototypes());
 	}
 
 	/**
