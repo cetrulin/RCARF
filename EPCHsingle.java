@@ -39,16 +39,13 @@ import moa.core.DoubleVector;
 import moa.core.InstanceExample;
 import moa.core.Measurement;
 import moa.options.ClassOption;
+// import weka.gui.beans.Clusterer;
 import moa.classifiers.AbstractClassifier;
 import moa.classifiers.Classifier;
 import moa.classifiers.MultiClassClassifier;
 import moa.classifiers.core.driftdetection.ChangeDetector;
 import moa.classifiers.igngsvm.gng.GNG;
 import moa.classifiers.igngsvm.gng.GUnit;
-import moa.classifiers.meta.EPCH.Concept;
-import moa.classifiers.meta.EPCH.EPCHBaseLearner;
-import moa.classifiers.meta.EPCH.Topology;
-import moa.classifiers.meta.EPCH.Window;
 import moa.evaluation.BasicClassificationPerformanceEvaluator;
 import moa.evaluation.DynamicWindowClassificationPerformanceEvaluator;
 import moa.evaluation.LearningPerformanceEvaluator;
@@ -77,9 +74,6 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 	public ClassOption baseLearnerOption = new ClassOption("baseLearner", 'l', "Classifier to train.", Classifier.class,
 			"trees.HoeffdingTree -e 1000000 -g 200 -c 0"); // default params for hoeffding trees
 
-	public FloatOption lambdaOption = new FloatOption("lambda", 'a', "The lambda parameter for bagging.", 6.0, 1.0,
-			Float.MAX_VALUE);
-
 	public ClassOption driftDetectionMethodOption = new ClassOption("driftDetectionMethod", 'x',
 			"Change detector for drifts and its parameters", ChangeDetector.class, "ADWINChangeDetector -a 1.0E-5");
 
@@ -87,35 +81,20 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 			"Change detector for warnings (start training bkg learner)", ChangeDetector.class,
 			"ADWINChangeDetector -a 1.0E-4");
 
-	public FlagOption disableWeightedVote = new FlagOption("disableWeightedVote", 'w', "Should use weighted voting?");
-
 	public FlagOption disableDriftDetectionOption = new FlagOption("disableDriftDetection", 'u',
-			"Should use drift detection? If disabled then bkg learner is also disabled");
+			"Should the algorithm use drift detection? If disabled then bkg learner is also disabled.");
 
 	public FlagOption disableRecurringDriftDetectionOption = new FlagOption("disableRecurringDriftDetection", 'r',
-			"Should save old learners to compare against in the future? If disabled then recurring concepts are not handled explicitely.");
-
-	public FlagOption rememberConceptWindowOption = new FlagOption("rememberConceptWindow", 'i',
-			"Should remember last window size when retrieving a concept? If disabled then retrieved concepts will have a default window size.");
+			"Should the algorithm save old learners to compare against in the future? If disabled then recurring concepts are not handled explicitely.");
 
 	public IntOption defaultWindowOption = new IntOption("defaultWindow", 'd',
 			"Number of rows by default in Dynamic Sliding Windows.", 50, 1, Integer.MAX_VALUE);
 
-	public IntOption windowIncrementsOption = new IntOption("windowIncrements", 'c',
-			"Size of the increments or decrements in Dynamic Sliding Windows.", 1, 1, Integer.MAX_VALUE);
-
 	public IntOption minWindowSizeOption = new IntOption("minWindowSize", 'z',
-			"Minimum window size in Dynamic Sliding Windows.", 5, 1, Integer.MAX_VALUE);
-
-	public IntOption windowResizePolicyOption = new IntOption("windowResizePolicy", 'y',
-			"Policy to update the size of the window. Ordered by complexity, being 0 the simplest one and 3 the one with most complexity.",
-			0, 0, 2);
-
-	public FloatOption thresholdOption = new FloatOption("thresholdOption", 't',
-			"Decision threshold for recurring concepts (-1 = threshold option disabled).", 0.65, -1, Float.MAX_VALUE);
+			"Minimum window size in Dynamic Sliding Windows.", 25, 1, Integer.MAX_VALUE);
 
 	public FlagOption resizeAllWindowsOption = new FlagOption("resizeAllWindows", 'b',
-			"Should the comparison windows for old learners be also dynamic?");
+			"Should the internal evaluator windows for old learners be dynamic as well?");
 
 	public StringOption eventsLogFileOption = new StringOption("eventsLogFile", 'e',
 			"File path to export events as warnings and drifts", "./EPCH_events_log.txt");
@@ -130,31 +109,18 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 			"Classification performance evaluation method in each base classifier for voting.",
 			LearningPerformanceEvaluator.class, "BasicClassificationPerformanceEvaluator");
 
-	public IntOption driftDecisionMechanismOption = new IntOption("driftDecisionMechanism", 'k',
-			"0 does not take into account the performance active base classifier explicitely, at the time of the drift; "  +
-			"1 takes into consideration active classifiers", 2, 0, 2);
-
-	public IntOption warningWindowSizeThresholdOption = new IntOption("WarningWindowSizeThreshold", 'ñ',
+	public IntOption warningWindowSizeThresholdOption = new IntOption("WarningWindowSizeThreshold", 'i',
 			"Threshold for warning window size that defines a false a alarm.", 300, 1, Integer.MAX_VALUE);
 
-	public FloatOption distThresholdOption = new FloatOption("distThresholdOption", 'ç',
+	public FloatOption distThresholdOption = new FloatOption("distThresholdOption", 't',
 			"Max distance allowed between topologies to be considered part of the same group.", 100000, 0, Float.MAX_VALUE);
 	
-	public FlagOption resetTopologyInMerginOption = new FlagOption("resetTopologyInMergin", '€',
-			"Should the topology be trained from scratch after a drift signal is raised?");
+	public ClassOption topologyLearnerOption = new ClassOption("topologyLearner", 'c', "Clusterer to train.", GNG.class, // TODO: it should be Clusterer.class, hardcoded by now
+			"GNG -l 100 -m 200 -a 0.5 -d 0.995 -e 0.2 -n 0.006 -c 100 -b"); // default params for hoeffding trees
 	
-	// Options for the topology: TODO (these should come from a meta class)
-	public IntOption topologyLambdaOption = new IntOption("topologyLambda", 'o', "Topology Lambda", 100);
-	public IntOption maxAgeOption = new IntOption("maxAge", 'm', "MaximumAge", 200);
-	public FloatOption alfaOption = new FloatOption("alfa", '$', "Alfa", 0.5);
-	public FloatOption constantOption = new FloatOption("d", '&', "d", 0.995);
-	public FloatOption BepsilonOption = new FloatOption("epsilonB", '@', "EpsilonB", 0.2);
-	public FloatOption NepsilonOption = new FloatOption("epsilonN", 'j', "EpsilonN", 0.006);
-	public IntOption stoppingCriteriaOption = new IntOption("stoppingCriteria", 'v', "Stopping criteria", 100);
 	// public FloatOption stopPercentageOption = new FloatOption("stopPercentageOption", 'P',
 	//		"Stopping criteria as percentage (if 0, the static stopping criteria is )", 0, 0, 100.0);
-	public FlagOption classNotAsAnAttributeInTopologyOption = new FlagOption("classNotAsAnAttributeInTopology", 'q',
-			"Should the class be considered as a feature in the topology?");
+
 	//////////
 	
 	protected EPCHBaseLearner active;
@@ -308,7 +274,7 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 	
 	
 	@Override
-	public double[] getVotesForInstance(Instance instance) {
+	public double[] getVotesForInstance(Instance instance) { // although just one active learner. so only this one votes. legacy code from RCARF
 		Instance testInstance = instance.copy();
 		if (this.active == null) init(testInstance);
 		DoubleVector combinedVote = new DoubleVector();
@@ -316,9 +282,9 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 		if (vote.sumOfValues() > 0.0) {
 			vote.normalize();
 			double acc = this.active.evaluator.getPerformanceMeasurements()[1].getValue();
-			if (!this.disableWeightedVote.isSet() && acc > 0.0) {
-				for (int v = 0; v < vote.numValues(); ++v) vote.setValue(v, vote.getValue(v) * acc);
-			}
+			//if (!this.disableWeightedVote.isSet() && acc > 0.0) {
+			//	for (int v = 0; v < vote.numValues(); ++v) vote.setValue(v, vote.getValue(v) * acc);
+			//}
 			combinedVote.addValues(vote);
 		}
 		return combinedVote.getArrayRef();
@@ -348,8 +314,7 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 	// TODO: should initEnsemble be inside the init method? or the opposite maybe?
 	private void init(Instance instance) {
 		if (!this.disableDriftDetectionOption.isSet() && this.topology == null) {
-			this.topology = new Topology(this.topologyLambdaOption, this.alfaOption, this.maxAgeOption,
-				this.constantOption, this.BepsilonOption, this.NepsilonOption, this.classNotAsAnAttributeInTopologyOption); // algorithm line 1
+			this.topology = new Topology(this.topologyLearnerOption); // algorithm line 1
 			this.topology.resetLearningImpl();
 		} System.out.println("prototypes created in topology:" + this.topology.getNumberOfPrototypesCreated());
 
@@ -383,10 +348,13 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 					false, // isbkglearner
 					!this.disableRecurringDriftDetectionOption.isSet(),
 					false, // first classifier is not in the CH.
-					new Window(this.defaultWindowOption.getValue(), this.windowIncrementsOption.getValue(),
-							this.minWindowSizeOption.getValue(), this.thresholdOption.getValue(),
-							this.rememberConceptWindowOption.isSet() ? true : false,
-							this.resizeAllWindowsOption.isSet() ? true : false, windowResizePolicyOption.getValue()),
+					new Window(this.defaultWindowOption.getValue(), 
+							1, // size of increments/decrements
+							this.minWindowSizeOption.getValue(), 
+							0.65, // "Decision threshold for recurring concepts (-1 = threshold option disabled)."
+							false, // rememberConceptWindowOption?
+							this.resizeAllWindowsOption.isSet() ? true : false, 
+							0), // "Policy to update the size of the window."
 					null, // Windows start at NULL
 					this.warningWindowSizeThresholdOption.getValue());
 		}
@@ -546,7 +514,7 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 				if (!this.disableRecurringDriftDetectionOption.isSet())
 					this.CH.decreaseNumberOfWarnings(0); //, previousGroup); // step 3
 				this.active.reset(); // reset base classifier  (step 4)
-				if (this.newTopology != null) this.topology = updateExtraTopology(this.newTopology, this.W); // line 34
+				if (this.newTopology != null) this.topology = mergeTopologies(this.newTopology, this.W); // line 34
 				this.W.delete(); // line 35
 			}
 		}
@@ -556,7 +524,7 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 		// Move copy of active classifier made before warning to Concept History.
 		this.active.tmpCopyOfClassifier.addHistoryID(this.CHid++); // ConceptHistory.nextID())
 		this.CH.addLearnerToGroup(previousGroup, this.active.tmpCopyOfClassifier); // line 29
-		this.CH.setGroupTopology(previousGroup, mergeTopologies(this.CH.getTopologyFromGroup(previousGroup))); // line 30
+		this.CH.setGroupTopology(previousGroup, mergeTopologies(this.CH.getTopologyFromGroup(previousGroup), null)); // line 30
 	}
 
 	// DRIFT ACTIONS
@@ -590,8 +558,7 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 		// Register background drift
 		if (this.eventsLogFile != null && this.logLevel >= 0)
 			logEvent(getBkgDriftEvent());
-		this.newTopology = new Topology(this.topologyLambdaOption, this.alfaOption, this.maxAgeOption,
-				this.constantOption, this.BepsilonOption, this.NepsilonOption, this.classNotAsAnAttributeInTopologyOption); // line 33
+		this.newTopology = new Topology(this.topologyLearnerOption); // line 33
 		this.newTopology.resetLearningImpl();
 	}
 
@@ -609,21 +576,14 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 	 * False alarms depend on the drift decision mechanism
 	 * -----------------------------------------------------------------------------------------------------------------
 	 *
-	 * When driftDecisionMechanism == 0, if bkgLearner == null, false alarms cannot
-	 * be raised. A comparison against CH is not possible as there is no bkg learner
-	 * trained. In this case, a drift signal has been raised and it cannot be
-	 * stopped without false alarms. A bkg drift applies as only option available.
-	 *
-	 * When drift decision mechanism == 1 or 2, then false alarms are taken into
-	 * consideration for drifts (the warning will be still active even if a false
-	 * alarm is raised for a drift in the same active classifier). If the background
-	 * learner is NULL, we consider that the drift signal may have been caused by a
-	 * too sensitive drift detection parameterization. In this case, it's clearly
+	 * False alarms are taken into consideration for drifts (the warning will be still active
+	 * even if a false alarm is raised for a drift in the same active classifier). 
+	 * If the background learner is NULL, we consider that the drift signal may have been caused 
+	 * by a too sensitive drift detection parameterization. In this case, it's clearly
 	 * too soon to change the active classifier. Therefore we raise a drift signal.
 	 *
-	 * When drift decision mechanism == 2, we also raise a false alarm when the
-	 * active classifier obtains less error than the bkg classifier and all of the
-	 * classifiers from the CH.
+	 * We also raise a false alarm when the active classifier obtains less error than the 
+	 * bkg classifier and all of the classifiers from the CH.
 	 *
 	 * -----------------------------------------------------------------------------------------------------------------
 	 * If the active classifier is not the best available choice / false alarm is
@@ -646,7 +606,7 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 		HashMap<Integer, Double> ranking = new HashMap<Integer, Double> ();
 		
 		// 1 Raise a false alarm for the drift if the background learner is not ready (Case 1)
-		if (this.driftDecisionMechanismOption.getValue() > 0 && this.active.bkgLearner == null)
+		if (this.active.bkgLearner == null)
 			return registerDriftFalseAlarm();
 		    
 		// 2 Retrieve best applicable classifier from Concept History (if a CH group applies)
@@ -656,41 +616,29 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 			errorOfBestRanked = Collections.min(ranking.values());
 		}
 		// 3 Compare this against the background classifier and make the decision.
-		if (this.driftDecisionMechanismOption.getValue() == 2) {
-			if (activeBetterThanBKGbaseClassifier()) {
-				if (ranking.size() > 0 && !activeBetterThanCHbaseClassifier(errorOfBestRanked))
-					registerRecurringDrift(indexOfBestRanked, historyGroup);
-				// False alarm if active classifier is still the best one and when there are no applicable concepts.
-				else return registerDriftFalseAlarm();
-			} else {
-				if (ranking.size() > 0 && bkgBetterThanCHbaseClassifier(errorOfBestRanked))
-					registerRecurringDrift(indexOfBestRanked, historyGroup);
-				else registerBkgDrift();
-			}
-		// Drift decision mechanism == 0 or 1 (in an edge case where the bkgclassifier is still NULL, we ignore the comparisons) (Case 1)
-		} else {
-			if (ranking.size() > 0 && this.active.bkgLearner != null
-					&& bkgBetterThanCHbaseClassifier(errorOfBestRanked))
+		if (activeBetterThanBKGbaseClassifier()) {
+			if (ranking.size() > 0 && !activeBetterThanCHbaseClassifier(errorOfBestRanked))
 				registerRecurringDrift(indexOfBestRanked, historyGroup);
-			else
-				registerBkgDrift();
+			// False alarm if active classifier is still the best one and when there are no applicable concepts.
+			else return registerDriftFalseAlarm();
+		} else {
+			if (ranking.size() > 0 && bkgBetterThanCHbaseClassifier(errorOfBestRanked))
+				registerRecurringDrift(indexOfBestRanked, historyGroup);
+			else registerBkgDrift();
 			
 		} return false; // No false alarms raised at this point
-
-	}
-
-	protected Topology mergeTopologies(Topology CHtop) {		
-
-		// way 2: old prototypes may be more important here due to the way how GNG works
-		return updateExtraTopology(CHtop, this.topology.getPrototypes());
 	}
 
 	/**
 	 * This auxiliary function updates either old or new topologies that will be merged with, compared with, or will replace to the current one.
 	 * */
-	protected Topology updateExtraTopology(Topology top, Instances w2) {
+	protected Topology mergeTopologies(Topology top, Instances w2) {
 		
-		/*
+		if (w2 == null) w2 = this.topology.getPrototypes();
+		
+		/* If there is a different stopping criteria, it should depend on the avg error obtained by the topologies
+		 * as at some point in the learning process GNG will only improve the accuracy a bit, and slowly, as the approximation should get better overtime.
+		 * Stopping early should only give us speed (loosing accuracy). If we do this (we may not need to), the tradeoff is the key.
 		int trainType = 0;
 		if(stopPercentageOption.getValue() > 0)
 			top.stoppingCriteriaOption.setValue((int)((this.stopPercentageOption.getValue() * (double) w2.size()) / 100.0));
@@ -702,9 +650,8 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 				top.trainOnInstanceImpl((Instance) w2.get(i));
 		        	if(i+1==w2.numInstances()) i = -1;
 		    }
-			
 		} else { */
-			// we add them once
+			// We add them once
 			for (int instPos = 0; instPos < w2.size(); instPos++) {
 				top.trainOnInstanceImpl(w2.get(instPos));
 			}
@@ -1211,11 +1158,10 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 		public FloatOption NepsilonOption = new FloatOption("epsilonN", 'K', "EpsilonN", 0.006);
 		public IntOption stoppingCriteriaOption = new IntOption("stoppingCriteria", 'c', "Stopping criteria", 0);
 		public FlagOption classAsAttributeOption = new FlagOption("classAsFeature", 'b',
-				"Should the class be considered as a feature in the topology?");
+				"Should be the class considered as a feature in the topology?");
 
-		protected GNG learner; // TODO: this should be a meta class so the algorithm can be changed
+		protected GNG learner; // TODO: this should be a meta class of cluster instead
 		private Instance auxInst;
-		
 
 		public Topology(IntOption GNGLambdaOption, FloatOption alfaOption, IntOption maxAgeOption, FloatOption constantOption,
 				FloatOption BepsilonOption, FloatOption NepsilonOption, FlagOption classNotAsAttributeOption) {
@@ -1229,11 +1175,16 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 			// inverting parameter as for topology objects the default flag value should be set
 			this.classAsAttributeOption = classNotAsAttributeOption;
 			this.classAsAttributeOption.setValue(!classNotAsAttributeOption.isSet());
-			
+
+			// System.out.println("DEPRECATED FUNCTION TO CREATE TOPOLOGIES. THIS IS NOT WORKING ANYMORE! PLEASE, UPDATE.");
 			this.learner = new GNG(this.GNGLambdaOption, this.alfaOption, this.maxAgeOption, this.constantOption,
 					this.BepsilonOption, this.NepsilonOption, this.classAsAttributeOption);
 		}
 		
+		public Topology(ClassOption topologyLearnerOption) {
+			this.learner = (GNG) getPreparedClassOption(topologyLearnerOption);  // TODO: it should be casted as a generic clustering algorithm
+		}
+
 		protected void resetLearningImpl() {
 			this.learner.resetLearningImpl();
 		}
@@ -1251,7 +1202,7 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 		}
 		
 		protected int getNumberOfPrototypesCreated() {
-			return this.learner.getNumberOfPrototypesCreated();
+			return ((GNG) this.learner).getNumberOfPrototypesCreated();
 		}
 		
 		protected Instances prototypesToUnsupervisedInstances(ArrayList<GUnit> tmpPrototypes) {
