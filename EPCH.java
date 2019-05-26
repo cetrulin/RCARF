@@ -1287,12 +1287,12 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 		}
 		
 		protected void resetLearningImpl() {
-			this.learner.resetLearningImpl();
+			this.learner.resetLearning();
 		}
 		
 		public void trainOnInstanceImpl(Instance inst) {
 			if (this.auxInst == null) this.auxInst = inst.copy(); // Aux variable for conversions
-			this.learner.trainOnInstanceImpl(inst);
+			this.learner.trainOnInstance(inst);
 		}
 	
 		protected ArrayList<double[]> prototypeToArray(ArrayList<GUnit> tmpPrototypes) {
