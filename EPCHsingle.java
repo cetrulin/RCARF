@@ -110,7 +110,7 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 			LearningPerformanceEvaluator.class, "BasicClassificationPerformanceEvaluator");
 
 	public IntOption warningWindowSizeThresholdOption = new IntOption("WarningWindowSizeThreshold", 'i',
-			"Threshold for warning window size that defines a false a alarm.", 300, 1, Integer.MAX_VALUE);
+			"Threshold for warning window size that defines a false a alarm.", 1000, 1, Integer.MAX_VALUE);
 
 	public FloatOption distThresholdOption = new FloatOption("distThresholdOption", 't',
 			"Max distance allowed between topologies to be considered part of the same group.", 100000, 0, Float.MAX_VALUE);
@@ -231,7 +231,8 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 	@Override
 	public void trainOnInstanceImpl(Instance instance) {
 		++this.instancesSeen;
-		init(instance); // Step 0: Initialization
+        if(this.active == null || (!this.disableDriftDetectionOption.isSet() && this.topology == null)) 
+    			init(instance); // Step 0: Initialization
 
 		// Step 1: Update error in concept history learners
 		if (!this.disableRecurringDriftDetectionOption.isSet() && this.CH != null
@@ -246,8 +247,13 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 		// Step 6: Check for drifts and warnings only if drift detection is enabled
 		if (!this.disableDriftDetectionOption.isSet()) { 	
 			boolean correctlyClassified = this.correctlyClassifies(instance);
-			if (this.isOnWarningWindow) trainDuringWarningImpl(instance); // Step 7.1: update warning window
-			else this.topology.trainOnInstanceImpl(instance); // Step 7.1.1: Lines 13-15: otherwise train topology
+			if (this.isOnWarningWindow) trainDuringWarningImpl(instance); // Step 7.1: update actions on warning window
+			else {
+				this.topology.trainOnInstanceImpl(instance);
+				// System.out.println("prototypes created in topology:" + this.topology.getNumberOfPrototypesCreated());
+			}; // Step 7.1.1: Lines 13-15: otherwise train topology
+
+			System.out.println(this.instancesSeen+" "+this.isOnWarningWindow);
 			
 			// Update the WARNING detection method 
 			this.warningDetectionMethod.input(correctlyClassified ? 0 : 1); 
@@ -322,8 +328,7 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 		if (!this.disableDriftDetectionOption.isSet() && this.topology == null) {
 			this.topology = new Topology(this.topologyLearnerOption); // algorithm line 1
 			this.topology.resetLearningImpl();
-		} System.out.println("prototypes created in topology:" + this.topology.getNumberOfPrototypesCreated());
-
+		} 
 		if (this.active == null) { // algorithm lines 2-3
 			// Init the ensemble.
 			BasicClassificationPerformanceEvaluator classificationEvaluator = (BasicClassificationPerformanceEvaluator)
@@ -397,12 +402,15 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 		// Step 1: Check if the warning window should be disabled (Lines 7-9) 
 		// TODO: we could also disable warnings by using a signal to noise ratio variation of the overall classifier during warning
 		if (this.W.size() > this.warningWindowSizeThresholdOption.getValue()) resetWarningWindow(); // Line 8
-		 		
-		// Step 2: Either warning window training/buffering or topology update (Lines 10-15)
-		if (this.W.size() >= 0 && this.W.size() <= this.warningWindowSizeThresholdOption.getValue()) { 
+		// TODO: is this reset necessary? is there any scenario where this causes issues as reseted just before drift?		
+		else {
+			// Step 2: Either warning window training/buffering or topology update (Lines 10-15)
+			// if (this.W.size() <= this.warningWindowSizeThresholdOption.getValue()) { 
 			this.active.bkgLearner.classifier.trainOnInstance(inst); // Line 11
 			this.W.add(inst); // Line 12
-		} System.out.println("SIZE OF W: "+ W.size());
+		}
+		//} 
+		// System.out.println("SIZE OF W: "+ W.size());
 	}
 	
 	protected void resetWarningWindow(){
@@ -413,6 +421,7 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 		this.W.delete(); // Lines 8 and 19 (it also initializes the object W)
 		this.isOnWarningWindow = false;
 		this.CH.decreaseNumberOfWarnings(0); // update applicable concepts
+		System.out.println("FALSE WARNING DETECTED!");
 	}
 	
 	/**
@@ -484,6 +493,7 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 		this.lastDriftOn = this.instancesSeen;
 		this.numberOfDriftsDetected++;
 		boolean falseAlarm = false; // Set false alarms (case 1) at false as default
+		System.out.println("DRIFT DETECTED!");
 		
 		// Retrieval from CH
 		if (!this.disableRecurringDriftDetectionOption.isSet()) // step 1: lines 30-33 of the algorithm
@@ -509,6 +519,7 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 			
 			if (!this.disableRecurringDriftDetectionOption.isSet())
 				this.CH.decreaseNumberOfWarnings(0); // step 3
+			this.isOnWarningWindow = false;
 			this.active.reset(); // reset base classifier and transition to bkg or recurring learner (step 4)
 			if (this.newTopology != null) this.topology = updateTopology(this.newTopology, this.W); // line 33
 			this.W.delete(); // line 34
@@ -593,8 +604,7 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 		HashMap<Integer, Double> ranking = new HashMap<Integer, Double> ();
 		
 		// 1 Raise a false alarm for the drift if the background learner is not ready 
-		if (this.active.bkgLearner == null)
-			return registerDriftFalseAlarm();
+		if (this.active.bkgLearner == null) return registerDriftFalseAlarm();
 		    
 		// 2 Retrieve best applicable classifier from Concept History (if a CH group applies)
 		if (historyGroup != -1) ranking = rankConceptHistoryClassifiers(historyGroup);
