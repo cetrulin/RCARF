@@ -58,6 +58,7 @@ import com.yahoo.labs.samoa.instances.Instances;
  *
  * @author Andres Leon Suarez Cetrulo (suarezcetrulo at gmail dot com)
  * @version $Revision: 1 $
+ * IMP: EPCH deals with structured streams that do not vary their number of features overtime.
  */
 public class EPCHsingle extends AbstractClassifier implements MultiClassClassifier {
 
@@ -113,7 +114,11 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 			"Threshold for warning window size that defines a false a alarm.", 1000, 1, Integer.MAX_VALUE);
 
 	public FloatOption distThresholdOption = new FloatOption("distThresholdOption", 't',
-			"Max distance allowed between topologies to be considered part of the same group.", 100000, 0, Float.MAX_VALUE);
+			"Max distance allowed between topologies to be considered part of the same group.", 500000, 0, Float.MAX_VALUE);
+	
+	public IntOption minTopologySizeForDriftOption = new IntOption("minTopologySizeForDriftOption", 'a',
+			"Minimum number of prototypes created before allowing a drift.", 1, 0, Integer.MAX_VALUE);
+	
 	
 	public ClassOption topologyLearnerOption = new ClassOption("topologyLearner", 'c', "Clusterer to train.", GNG.class, // TODO: make it a Clusterer.class
 			"GNG -l 100 -m 200 -a 0.5 -d 0.995 -e 0.2 -n 0.006 -c 100 -b"); // default params for hoeffding trees
@@ -161,6 +166,7 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 	
 	@Override
 	public void resetLearningImpl() {
+		
 		// Reset attributes
 		this.active = null;
 		this.subspaceSize = 0;
@@ -243,17 +249,23 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 		
 		// Step 5: Train base classifier (Lines 4-6)
 		this.active.trainOnInstance(instance, this.instancesSeen);
-		
+		//System.out.print("before: ");
+		// this.CH.printTopologies();  // debug
+		// System.out.println("Instances seen: " + this.instancesSeen);  // debug
+		// System.out.println("this top size:" + this.topology.getNumberOfPrototypesCreated());
+
 		// Step 6: Check for drifts and warnings only if drift detection is enabled
 		if (!this.disableDriftDetectionOption.isSet()) { 	
 			boolean correctlyClassified = this.correctlyClassifies(instance);
 			if (this.isOnWarningWindow) trainDuringWarningImpl(instance); // Step 7.1: update actions on warning window
 			else {
 				this.topology.trainOnInstanceImpl(instance);
+				//System.out.print("after: ");
+				//this.CH.printTopologies();  // debug
 				// System.out.println("prototypes created in topology:" + this.topology.getNumberOfPrototypesCreated());
 			}; // Step 7.1.1: Lines 13-15: otherwise train topology
-
-			System.out.println(this.instancesSeen+" "+this.isOnWarningWindow);
+			
+			// System.out.println(this.instancesSeen+" "+this.isOnWarningWindow);
 			
 			// Update the WARNING detection method 
 			this.warningDetectionMethod.input(correctlyClassified ? 0 : 1); 
@@ -319,8 +331,8 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
         measurementList.add(new Measurement("Change detected", this.numberOfDriftsDetected));
         measurementList.add(new Measurement("Warning detected", this.numberOfWarningsDetected));
         // TODO. add all columns from logEvents object, to remove this object
-        // this.numberOfDriftsDetected = 0;
-        // this.numberOfWarningsDetected = 0;
+        this.numberOfDriftsDetected = 0;
+        this.numberOfWarningsDetected = 0;
         return measurementList.toArray(new Measurement[measurementList.size()]);
     }
 	
@@ -401,27 +413,30 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 	protected void trainDuringWarningImpl(Instance inst) {
 		// Step 1: Check if the warning window should be disabled (Lines 7-9) 
 		// TODO: we could also disable warnings by using a signal to noise ratio variation of the overall classifier during warning
-		if (this.W.size() > this.warningWindowSizeThresholdOption.getValue()) resetWarningWindow(); // Line 8
+		if (this.W.numInstances() > this.warningWindowSizeThresholdOption.getValue()) resetWarningWindow(true); // Line 8
 		// TODO: is this reset necessary? is there any scenario where this causes issues as reseted just before drift?		
 		else {
 			// Step 2: Either warning window training/buffering or topology update (Lines 10-15)
-			// if (this.W.size() <= this.warningWindowSizeThresholdOption.getValue()) { 
+			// if (this.W.numInstances() <= this.warningWindowSizeThresholdOption.getValue()) { 
 			this.active.bkgLearner.classifier.trainOnInstance(inst); // Line 11
-			this.W.add(inst); // Line 12
+			this.W.add(inst.copy()); // Line 12
 		}
 		//} 
-		// System.out.println("SIZE OF W: "+ W.size());
+		// System.out.println("SIZE OF W: "+ W.numInstances());
 	}
 	
-	protected void resetWarningWindow(){
-		this.active.bkgLearner = null; // Lines 8 and 19
-		this.active.internalWindowEvaluator = null;
-		this.active.tmpCopyOfClassifier = null;
+	protected void resetWarningWindow(boolean resetBkgLearner){
+		if (resetBkgLearner) {
+			this.active.bkgLearner = null; // Lines 8 and 19
+			this.active.internalWindowEvaluator = null;
+			this.active.tmpCopyOfClassifier = null;
+			System.out.println("BKG AND TMP CLASSIFIERS AND INTERNAL WINDOW RESTARTED");
+		}
 		this.warningDetectionMethod = ((ChangeDetector) getPreparedClassOption(this.warningDetectionMethodOption)).copy(); // restart warning
+		System.out.println("W size was: "+W.numInstances());
 		this.W.delete(); // Lines 8 and 19 (it also initializes the object W)
 		this.isOnWarningWindow = false;
-		this.CH.decreaseNumberOfWarnings(0); // update applicable concepts
-		System.out.println("FALSE WARNING DETECTED!");
+		if (!this.disableRecurringDriftDetectionOption.isSet()) this.CH.decreaseNumberOfWarnings(0); // update applicable concepts
 	}
 	
 	/**
@@ -441,7 +456,7 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 		this.numberOfWarningsDetected++;
 		
 		// Step 0 (Line 19)
-        resetWarningWindow(); 
+        resetWarningWindow(true); 
 
 		// Step 1 Update last error and make a backup of the current classifier
 		if (!this.disableRecurringDriftDetectionOption.isSet()) {
@@ -472,8 +487,8 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 	 *      with lower error than active classifier (and driftDecisionMechanism > 0), then a false alarm is raised.
 	 *     This step belong to line 32 in the algorithm: c = FindClassifier(c, b, GH) -> Assign best transition to next state.
 	 * - 2 Orchestrate all the actions if the drift is confirmed and there is not a false alarm.
-	 * - 3 Decrease amount of warnings in concept history and from evaluators
-	 * - 4 reset base learner
+	 * - 4 Decrease amount of warnings in concept history and from evaluators
+	 * - 3 reset base learner
 	 *
 	 * Lines of the algorithm Lines 22-25 are implemented here:
 	 * -----------
@@ -493,37 +508,59 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 		this.lastDriftOn = this.instancesSeen;
 		this.numberOfDriftsDetected++;
 		boolean falseAlarm = false; // Set false alarms (case 1) at false as default
-		System.out.println("DRIFT DETECTED!");
-		
-		// Retrieval from CH
-		if (!this.disableRecurringDriftDetectionOption.isSet()) // step 1: lines 30-33 of the algorithm
-			// Start retrieval from CH (TODO: W should only be used if warning detection is enabled. same for topologies?)
-			falseAlarm = switchActiveClassifier(this.CH.findGroup(this.W)); // TODO: refactor so false alarm is checked by an specific method
-		else if (this.eventsLogFile != null && this.logLevelOption.getValue() >= 1)  // TODO: remove this.eventsLogFile != null as a condition
-			logEvent(getBkgDriftEvent());  // TODO. Refactor this logEvent function so it's inside of 'registerDrift' and not wrapping it
-		if (!falseAlarm) {  // Step 2
-			// Insertion in CH (Lines 24-27)
-			Instances tmpPrototypes = this.topology.getPrototypes(); // line 24
-			int previousGroup = this.CH.findGroup(tmpPrototypes); // line 25
-			if (this.CH.size() == 0 || previousGroup == -1) { // line 26
-				previousGroup = this.groupsSeen++;
-				System.out.println("CREATING NEW GROUP: " + previousGroup); // TODO: remove once debugged. check that numbers are added correctly
-				this.CH.createNewGroup(previousGroup, tmpPrototypes, this.newTopology); // line 27
-			} else System.out.println("SELECTING FROM GROUP: " + previousGroup); // TODO: remove once debugged. check that numbers are selected correctly
+
+		if (this.topology.getNumberOfPrototypesCreated() >= minTopologySizeForDriftOption.getValue()) {
+			System.out.println("DRIFT DETECTED!");
+			System.out.println();
 			
-			// Move copy of active classifier made before warning to Concept History.
-			this.active.tmpCopyOfClassifier.addHistoryID(this.conceptsSeen++);
-			this.CH.addLearnerToGroup(previousGroup, this.active.tmpCopyOfClassifier); // line 28
-			this.CH.setGroupTopology(previousGroup, 
-					updateTopology(this.CH.getTopologyFromGroup(previousGroup), this.topology.getPrototypes())); // line 29
-			
-			if (!this.disableRecurringDriftDetectionOption.isSet())
-				this.CH.decreaseNumberOfWarnings(0); // step 3
-			this.isOnWarningWindow = false;
-			this.active.reset(); // reset base classifier and transition to bkg or recurring learner (step 4)
-			if (this.newTopology != null) this.topology = updateTopology(this.newTopology, this.W); // line 33
-			this.W.delete(); // line 34
+			// Retrieval from CH
+			if (!this.disableRecurringDriftDetectionOption.isSet()) // step 1: lines 30-33 of the algorithm
+				// Start retrieval from CH (TODO: W should only be used if warning detection is enabled. same for topologies?)
+				falseAlarm = switchActiveClassifier(this.CH.findGroup(this.W)); // TODO: refactor so false alarm is checked by an specific method
+			else if (this.eventsLogFile != null && this.logLevelOption.getValue() >= 1)  // TODO: remove this.eventsLogFile != null as a condition
+				logEvent(getBkgDriftEvent());  // TODO. Refactor this logEvent function so it's inside of 'registerDrift' and not wrapping it
+			if (!falseAlarm) {  // Step 2
+				// Insertion in CH (Lines 24-27)
+				Instances tmpPrototypes = this.topology.getPrototypes(); // line 24
+				System.out.println();
+				System.out.println("Pc size:" + this.topology.getNumberOfPrototypesCreated());
+				int previousTopologyGroupId = this.CH.findGroup(tmpPrototypes); // line 25
+				if (this.CH.size() == 0 || previousTopologyGroupId == -1) { // line 26
+					previousTopologyGroupId = this.groupsSeen++;
+					System.out.println("CREATING NEW GROUP: " + previousTopologyGroupId); // TODO: remove once debugged. check that numbers are added correctly
+					this.CH.createNewGroup(previousTopologyGroupId, this.topology.clone()); //, this.newTopology); // line 27
+				} else System.out.println("SELECTING FROM GROUP: " + previousTopologyGroupId); // TODO: remove once debugged. check that numbers are selected correctly
+							
+				// Move copy of active classifier made before warning to Concept History.
+				this.active.tmpCopyOfClassifier.addHistoryID(this.conceptsSeen++);
+				this.CH.addLearnerToGroup(previousTopologyGroupId, this.active.tmpCopyOfClassifier); // line 28  // debug. check that this is not a duplicate. that it's a separate object.
+				// TODO: Check on 3rd of June 2019. Check the line below. Should we add this??
+				// OJO: esta linea de abajo necesita agregar .clone/.copy en algun sitio, ya que no esta creando objetos nuevos y  hace que el updatetopology de abajo actualice el objeto de grupo de CH
+				// this.CH.setGroupTopology(previousTopologyGroupId, 
+				//		updateTopology(this.CH.copyTopologyFromGroup(previousTopologyGroupId), this.topology.getPrototypes())); // line 29
+				// asuarez 02-06.2019. quiza esto incluso fuese mas adecuado
+				// this.CH.setGroupTopology(previousTopologyGroupId, this.topology.clone()); // pero entonces perderiamos mucho historico..
+						
+				this.active.reset(); // reset base classifier and transition to bkg or recurring learner (step 3)
+				// Reset warning related params (but not the learners as these are used at the next step)
+				System.out.print("just after creation 1.5: ");
+				this.CH.printTopologies();
+				if (this.newTopology != null) this.topology = updateTopology(this.newTopology.clone(), this.W); // line 33
+					
+				resetWarningWindow(false); // step 4 and line 34. false as argument as the bkg related params are reseted in the prior line.
+				
+				System.out.print("just after creation 2: ");
+				this.CH.printTopologies();
+			}
+		} else {
+			System.out.println("There weren't enough prototypes.");
+			registerDriftFalseAlarm();
 		}
+		System.out.println("Pn size:" + this.topology.getNumberOfPrototypesCreated());
+		System.out.println();
+		// Reset drift independently on both false alarm and actual drift cases.
+		this.driftDetectionMethod = ((ChangeDetector) getPreparedClassOption(this.driftDetectionMethodOption)).copy();
+		this.newTopology = null;
 	}
 
 	// DRIFT ACTIONS
@@ -534,7 +571,7 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 	 */
 	protected boolean registerDriftFalseAlarm() {
 		if (this.eventsLogFile != null && this.logLevel >= 0) logEvent(getFalseAlarmEvent()); // TODO: refactor
-		this.newTopology = null; // then Pn = Pc  (line 32)
+		// this.newTopology = null; // then Pn = Pc  (line 32)  // not needed as null by default in drifthandling method
 		return true;
 	}
 
@@ -546,7 +583,7 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 		if (this.eventsLogFile != null && this.logLevel >= 0)
 			logEvent(getRecurringDriftEvent(indexOfBestRanked, historyGroup));  // TODO: refactor
 		this.active.bkgLearner = this.CH.copyConcept(historyGroup, indexOfBestRanked);
-		this.newTopology = this.CH.getTopologyFromGroup(historyGroup);  // then Pn = Ph  (line 32)
+		this.newTopology = this.CH.copyTopologyFromGroup(historyGroup);  // then Pn = Ph  (line 32)
 	}
 
 	/***
@@ -646,11 +683,19 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 		        	if(i+1==w2.numInstances()) i = -1;
 		    }
 		} else { */
+			System.out.print("just after creation 1.6: ");
+			this.CH.printTopologies();
+			
 			// We add them once
-			for (int instPos = 0; instPos < w2.size(); instPos++) {
-				top.trainOnInstanceImpl(w2.get(instPos));
+			for (int instPos = 0; instPos < w2.numInstances(); instPos++) {
+				top.trainOnInstanceImpl(w2.get(instPos).copy());
+				// System.out.println("prototypes created in topology:" + top.getNumberOfPrototypesCreated());
 			}
 		// }
+			
+			System.out.print("just after creation 1.9: ");
+			this.CH.printTopologies();
+			
 			
 		// TODO: verify that this method works properly
 			
@@ -793,7 +838,7 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 	public Event getRecurringDriftEvent(Integer indexOfBestRankedInCH, int group) {
 		System.out.println(indexOfBestRankedInCH); // TODO: remove after debugging
 		System.out.println("RECURRING DRIFT RESET IN POSITION #"+0+" TO MODEL #"+
-		CH.get(indexOfBestRankedInCH).groupList.get(indexOfBestRankedInCH).ensembleIndex);
+				CH.get(group).groupList.get(indexOfBestRankedInCH).historyIndex + " FROM GROUP "+group);
 		String[] eventLog = { String.valueOf(this.lastDriftOn), "RECURRING DRIFT", String.valueOf(0),
 				String.valueOf(this.active.evaluator.getPerformanceMeasurements()[1].getValue()),
 				this.warningDetectionMethodOption.getValueAsCLIString().replace("ADWINChangeDetector -a ", ""),
@@ -803,7 +848,7 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 				String.valueOf(!this.disableRecurringDriftDetectionOption.isSet() ? this.CH.getNumberOfActiveWarnings(): "N/A"),
 				String.valueOf(!this.disableRecurringDriftDetectionOption.isSet() ? this.CH.getWarnings(): "N/A"),
 				"N/A",
-				String.valueOf(this.CH.get(group).groupList.get(indexOfBestRankedInCH).ensembleIndex),
+				String.valueOf(this.CH.get(group).groupList.get(indexOfBestRankedInCH).historyIndex),
 				String.valueOf(this.CH.get(group).groupList.get(indexOfBestRankedInCH).createdOn) };
 		return (new Event(eventLog));
 	}
@@ -1136,15 +1181,17 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 	/**
 	 * TOPOLOGY RELATED METHODS AND META CLASS FOR CLUSTERING/TOPOLOGY SUMMARY ALGORITHM
 	 * */
-	protected class Topology {
+	protected class Topology implements Cloneable {
 		
 		protected GNG learner; // TODO: this should be a meta class of cluster instead
 		private Instance auxInst;
+		private int id;
 		
 		public Topology(ClassOption topologyLearnerOption) {
 			this.learner = (GNG) getPreparedClassOption(topologyLearnerOption);  // TODO: make it a generic clustering algorithm (not casted as GNG)
+			this.id = (int) (Math.random() * 1000);
 		}
-
+		
 		protected void resetLearningImpl() {
 			this.learner.resetLearningImpl();
 		}
@@ -1165,21 +1212,42 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 			return ((GNG) this.learner).getNumberOfPrototypesCreated();
 		}
 		
+		// method with bug
 		protected Instances prototypesToUnsupervisedInstances(ArrayList<GUnit> tmpPrototypes) {
 			Instances tmp = new Instances ((this.auxInst).dataset());
+			tmp.delete();
 			Instance inst = null;
-			
+
 			for(GUnit prototype: tmpPrototypes) {
 				inst = (Instance) this.auxInst.copy();
 				for (int j = 0; j < prototype.w.length; j++) inst.setValue(j, prototype.w[j]);
 				tmp.add(inst);
-			} return tmp;
+			} 
+			return tmp;
 		}
 		
 		public Instances getPrototypes() {
 			return prototypesToUnsupervisedInstances(this.learner.getS());
 		}
-
+		
+		public void setLearner (GNG newLearner) {
+			this.learner = (GNG) newLearner;
+		}
+		
+		public GNG getLearner () {
+			return this.learner;
+		}
+		
+		@Override
+		protected Topology clone() {
+		    try {
+		    		Topology cloned = (Topology) super.clone();
+		    		cloned.setLearner(cloned.getLearner().clone());
+				return cloned;
+			} catch (CloneNotSupportedException e) {
+				e.printStackTrace();
+			} return null;
+		}
 	}
 	
 	protected class Group {
@@ -1193,18 +1261,32 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 			this.groupList = new ConcurrentHashMap<Integer, Concept>();
 		}
 
+		// method changed on 01-06-2019
+		public Group(int id, ClassOption topologyLearnerOption) {
+			this.id = id; // nextID();
+			this.topology = new Topology(topologyLearnerOption);			
+			this.groupList = new ConcurrentHashMap<Integer, Concept>();		
+		}
+		
+		// method added on 01-06-2019
+		public void init(Instances tmpPrototypes) {
+			for (int instPos = 0; instPos < tmpPrototypes.size(); instPos++) {
+				this.topology.trainOnInstanceImpl(tmpPrototypes.get(instPos));
+			}
+		}
+
 		public EPCHBaseLearner copyConcept(int key) {
-			EPCHBaseLearner aux = groupList.get(key).getBaseLearner();
+			EPCHBaseLearner aux = this.groupList.get(key).getBaseLearner();
 			return aux;
 		}
 
 		// Getters
 		public int getID() {
-			return id;
+			return this.id;
 		}
 
 		public Instances getTopologyPrototypes() {
-			return topology.getPrototypes(); // these instances don't belong to a class (unsupervised)
+			return this.topology.getPrototypes(); // these instances don't belong to a class (unsupervised)
 		}
 		
 		public void setTopology(Topology topology2) {
@@ -1248,6 +1330,16 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 			this.history = new HashMap<Integer, Group>();
 			this.classifiersOnWarning = new HashMap<Integer, Boolean>();
 			this.maxDistanceThreshold = distThreshold;
+		}
+		
+		public void printTopologies() {
+			for (Group g : this.history.values()) {
+				System.out.println("*******************");
+				System.out.println("Learner ID: "+g.getTopology().getLearner().id);
+				System.out.println("TOP ID: "+g.getTopology().id);
+				System.out.println(g.getTopologyPrototypes().numInstances()+" prototypes in group "+g.getID());
+				System.out.println("*******************");
+			}
 		}
 		
 		public EPCHBaseLearner copyConcept(int group, int key) {
@@ -1329,9 +1421,18 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 			}
 		}
 		
-		/** Creation of new group and pushing of this to the CH */
-		protected void createNewGroup(int groupId, Instances tmpPrototypes, Topology newTopology) {
-			Group g = new Group(groupId, newTopology);
+		/** Creation of new group and pushing of this to the CH 
+		protected void createNewGroup(int groupId, Instances tmpPrototypes, ClassOption learnerOption) { // , Topology newTopology) {
+			Group g = new Group(groupId, learnerOption);
+			g.init(tmpPrototypes);
+			this.history.put(groupId, g); // the id is there twice to keep track of it and for testing purposes.
+		}*/
+		protected void createNewGroup(int groupId,  Topology top) {
+			Group g = new Group(groupId, top);
+			
+			System.out.println();
+			System.out.println("SAVING TOPOLOGY:" + g.topology.getNumberOfPrototypesCreated());
+			
 			this.history.put(groupId, g); // the id is there twice to keep track of it and for testing purposes.
 		}
 		
@@ -1344,17 +1445,31 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 			double dist = 0;
 			int group = -1;
 
+			// asuarez: Debugging groups
+			System.out.println();
+			System.out.println("There were "+w2.numInstances()+" instances for comparison.");
 			for (Group g : this.history.values()) {
 				dist = getAbsoluteSumDistances(w2, g.getTopologyPrototypes());
 				if (dist < min) {
 					min = dist;
 					group = g.getID();
-				}
+				} 
+				System.out.println("Distance of instances in W to group "+g.getID()+" is "+dist);
+				System.out.println("Learner ID: "+g.getTopology().getLearner().id);
+				System.out.println(g.getTopologyPrototypes().numInstances()+" prototypes in group "+g.getID());
+				System.out.println("Number of historical classifiers in the group: "+g.groupList.size());
+				System.out.println("--");
+				
 			}
+			System.out.println("");
+
 			if (dist < this.maxDistanceThreshold) {
+				System.out.println("The selected group, therefore, is group:"+group);
 				return group;
-			} else
+			} else {
+				System.out.println("No groups selected as the distance is "+dist+" and the maximum dist allowed is: "+this.maxDistanceThreshold);
 				return -1;
+			}
 		}
 		
 		/**
@@ -1364,8 +1479,8 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 		protected double getAbsoluteSumDistances(Instances w1, Instances w2) {
 			double totalDist = 0.0;
 
-			for (int instPos1 = 0; instPos1 < w1.size(); instPos1++) {
-				for (int instPos2 = 0; instPos2 < w2.size(); instPos2++) {
+			for (int instPos1 = 0; instPos1 < w1.numInstances(); instPos1++) {
+				for (int instPos2 = 0; instPos2 < w2.numInstances(); instPos2++) {
 					totalDist += dist(w1.get(instPos1), w2.get(instPos2));
 				}
 			} return totalDist;
@@ -1388,8 +1503,8 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 			return this.classifiersOnWarning;
 		}
 		
-		public Topology getTopologyFromGroup(int key) {
-			return this.get(key).getTopology();
+		public Topology copyTopologyFromGroup(int key) {
+			return this.get(key).getTopology().clone();
 		}
 				
 		public void setGroupTopology(int groupID, Topology top) {
@@ -1397,9 +1512,7 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 		}
 		
 		public void addLearnerToGroup(int groupID, Concept learner) {
-			System.out.println("Group before update has "+this.history.get(groupID).groupList.size()); // TODO: remove after testing
 			this.history.get(groupID).put(learner.historyIndex, learner); // line 29
-			System.out.println("Group id has now: "+this.history.get(groupID).groupList.size()); // TODO: remove after testing
 		}
 		
 		public Collection<Concept> getConceptsFromGroup(int groupID){
