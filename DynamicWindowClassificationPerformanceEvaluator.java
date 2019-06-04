@@ -213,7 +213,7 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
          protected HashMap<Integer,Integer> defaultSizes; 
          
          // Static parameters
-         protected int minimumSize; 
+         protected int minSize; 
          protected int sizeIncrements; 
          protected int windowResizePolicy;
          protected boolean resizingEnabled;
@@ -248,7 +248,7 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
 	     		
 	     		// Initializing static values
 	     		this.sizeIncrements = sizeIncrements;
-	         	this.minimumSize = minSize;          // minimum size should always be greater than size increments
+	         	this.minSize = minSize;          // minimum size should always be greater than size increments
 	     		this.threshold = threshold;
 	     		this.resizingEnabled=resizingEnabled;
 	     		this.windowResizePolicy=windowResizePolicy; 
@@ -304,9 +304,13 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
         	 	// Always storing extra results just in case the window grows
 			this.window.add(value);
 			
-  			// Remove oldest if it surpasses the maximum windowSize + increments. Also allow it to grow at the start till the minimum size if the default size is lower than this.
-         	if(this.window.size()>=(Math.max((Collections.max(this.SizeWindows.values())+this.sizeIncrements), this.minimumSize))) 
-         		this.window.remove(0);
+  			// Remove oldest if it surpasses the maximum windowSize + three times the increments. 
+			// Also allow it to grow at the start till the minimum size if the default size is lower than this.
+         	if(this.window.size()>(Math.max((Collections.max(this.SizeWindows.values())+this.sizeIncrements*3), this.minSize+this.sizeIncrements*3))) {
+         	System.out.println("-------");System.out.println(this.window.size()); System.out.println( this.minSize+this.sizeIncrements*3);
+         	System.out.println(this.window);
+         	 System.out.println("AQUI 1");	this.window.remove(0);
+         	}
 	  		
 	        	for (Entry<Integer, Integer> modelWindows : SizeWindows.entrySet()) {
 	         	// Resize window -- this update window size here is designed for increments of 1 unit, 
@@ -358,7 +362,12 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
  		 * @param desiredSize: window size or smaller window size
  		 * @return sublist with the desired sub window
  		 */
-         public List<Double> getSublist(int desiredSize){       	 
+         public List<Double> getSublist(int desiredSize){ 
+        	 System.out.println("$$$$$$$$4");
+        	 	System.out.println(this.estimatorID);
+        	 	System.out.println(this.window);
+        	 	System.out.println(this.window.subList(Math.max(this.window.size() - desiredSize, 0), this.window.size()));
+        	 	System.out.println("$$$$$$$$4");
 	        	 return this.window.subList(Math.max(this.window.size() - desiredSize, 0), this.window.size());
          }
                  
@@ -386,13 +395,18 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
          				this.SizeWindows.put(pos,this.SizeWindows.get(pos)+this.sizeIncrements);
          			else { // otherwise it decreases
      					this.SizeWindows.put(pos,this.SizeWindows.get(pos)-this.sizeIncrements);
-     					System.out.println("MINIMUM SIZE IS: "+this.minimumSize+" AND ACTUAL SIZE IS: "+getSublist(this.SizeWindows.get(pos)).size()); 
-         				if(getSublist(this.SizeWindows.get(pos)).size()<this.minimumSize) this.SizeWindows.put(pos,this.minimumSize);
-         				else { //if window size is greater than minimum size, the evaluator is decreasing size and its the maximum size model, we delete a value in the window
-         					System.out.println("ENTERED AS ACTUAL SIZE IS: "+this.SizeWindows.get(pos)+" ALTHOUGH ACTUAL SIZE IS: "+getSublist(this.SizeWindows.get(pos)).size());
+     					System.out.println("MINIMUM SIZE IS: "+this.minSize+" AND ACTUAL SIZE IS: "+getSublist(this.SizeWindows.get(pos)).size()); 
+         				if(this.SizeWindows.get(pos) <= this.minSize) this.SizeWindows.put(pos, this.minSize+1);
+         				else if(getSublist(this.SizeWindows.get(pos)).size() > this.minSize+1) { 
+         					System.out.println("ENTERED AS CURRENT SIZE IS: "+this.SizeWindows.get(pos)+" ALTHOUGH ACTUAL SIZE IS: "+getSublist(this.SizeWindows.get(pos)).size());
+
+         					// if getSublist(this.SizeWindows.get(pos)).size() < this.minSize, then keep growing inside the limits (do not remove any value)
+         					// if window size is greater than minimum size, the evaluator is decreasing size and its the maximum size model, we delete a value in the window
          					if (this.SizeWindows.get(pos) == Collections.max(this.SizeWindows.values())){
          						for(int n = 1; n <= this.sizeIncrements ; n++) this.window.remove(0); // we do it as many times as values we insert per time (sizeIncrements)
          					}
+         					System.out.println("ENTERED AS CURRENT SIZE IS: "+this.SizeWindows.get(pos)+" ALTHOUGH ACTUAL SIZE IS: "+getSublist(this.SizeWindows.get(pos)).size());
+
          				}
          			}
          			break;
@@ -404,9 +418,10 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
          				this.SizeWindows.put(pos,this.SizeWindows.get(pos)+this.sizeIncrements);
          			else {// otherwise it decreases
      					this.SizeWindows.put(pos,this.SizeWindows.get(pos)-this.sizeIncrements);
-         				if(getSublist(this.SizeWindows.get(pos)).size()<this.minimumSize) 
-         					this.SizeWindows.put(pos,this.minimumSize);
-         				else { //if window size is greater than minimum size, it is decreasing size and its the maximum size model, we delete a value in the window to free space
+         				if(this.SizeWindows.get(pos) <= this.minSize) this.SizeWindows.put(pos,this.minSize);
+         				else if(getSublist(this.SizeWindows.get(pos)).size() > this.minSize) { 
+         					// if getSublist(this.SizeWindows.get(pos)).size() < this.minSize, then keep growing inside the limits (do not remove any value)
+         					// if window size is greater than minimum size, it is decreasing size and its the maximum size model, we delete a value in the window to free space
          					if (this.SizeWindows.get(pos) == Collections.max(this.SizeWindows.values())){
          						for(int n = 1; n <= this.sizeIncrements ; n++) this.window.remove(0); // we do it as many times as values we insert per time (sizeIncrements)
          					}
@@ -425,9 +440,10 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
          				this.SizeWindows.put(pos,this.SizeWindows.get(pos)+this.sizeIncrements);
              		else if ( W_a_candidate_2 > W_a_candidate_0 && W_a_candidate_2 > W_a_candidate_1 ) { // Decrease window size
      					this.SizeWindows.put(pos,this.SizeWindows.get(pos)-this.sizeIncrements);
-         				if(getSublist(this.SizeWindows.get(pos)).size()<this.minimumSize) 
-         					this.SizeWindows.put(pos,this.minimumSize);
-         				else { //if window size is greater than minimum size, it is decreasing size and its the maximum size model, we delete a value in the window
+         				if(this.SizeWindows.get(pos) <= this.minSize) this.SizeWindows.put(pos,this.minSize);
+         				else if(getSublist(this.SizeWindows.get(pos)).size() > this.minSize) { 
+         					// if getSublist(this.SizeWindows.get(pos)).size() < this.minSize, then keep growing inside the limits (do not remove any value)
+         					// if window size is greater than minimum size, it is decreasing size and its the maximum size model, we delete a value in the window
          					if (this.SizeWindows.get(pos) == Collections.max(this.SizeWindows.values())){
          						for(int n = 1; n <= this.sizeIncrements ; n++) this.window.remove(0); // we do it as many times as values we insert per time (sizeIncrements)
          					}
