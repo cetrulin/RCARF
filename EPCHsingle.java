@@ -113,15 +113,15 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 	public IntOption warningWindowSizeThresholdOption = new IntOption("WarningWindowSizeThreshold", 'i',
 			"Threshold for warning window size that defines a false a alarm.", 1000, 1, Integer.MAX_VALUE);
 
-	public FloatOption distThresholdOption = new FloatOption("distThresholdOption", 't',
+	public FloatOption distThresholdOption = new FloatOption("distThreshold", 't',
 			"Max distance allowed between topologies to be considered part of the same group.", 50000, 0, Float.MAX_VALUE);
 	
-	public IntOption minTopologySizeForDriftOption = new IntOption("minTopologySizeForDriftOption", 'a',
+	public IntOption minTopologySizeForDriftOption = new IntOption("minTopologySizeForDrift", 'a',
 			"Minimum number of prototypes created before allowing a drift.", 1, 1, Integer.MAX_VALUE);
 	
 	// BY DEFAULT, SAME THAN minWindowSizeOption, AS BOTH SHOULD BE A MIN AMOUNT OF INSTACES THAT REPRESENTS WELL ENOUGH THE SET.
 	public IntOption minWSizeForDriftOption = new IntOption("minWSizeForDriftOption", 'w',
-			"Minimum number of instances in warning window W before allowing a drift.", 
+			"Minimum number of instances in warning window W before allowing a drift.",
 			minWindowSizeOption.getMinValue(), 1, Integer.MAX_VALUE);
 	
 	public FlagOption updateGroupTopologiesOption = new FlagOption("updateGroupTopologiesOption", 'j',
@@ -129,7 +129,7 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 	
 	// Plain-vanilla parameters for the clustering algorithm   // TODO: make it a Clusterer.class
 	public ClassOption topologyLearnerOption = new ClassOption("topologyLearner", 'c', "Clusterer to train.", GNG.class,
-			"GNG -l 100 -m 200 -a 0.5 -d 0.995 -e 0.2 -n 0.006 -c 100 -b"); 
+			"GNG -l 100 -m 200 -a 0.5 -d 0.995 -e 0.2 -n 0.006 -c 100 -b");
 	
 	// public FloatOption stopPercentageOption = new FloatOption("stopPercentageOption", 'P',
 	//		"Stopping criteria as percentage (if 0, the static stopping criteria is )", 0, 0, 100.0);
@@ -206,7 +206,7 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 	 * this method, warning and drift detection are performed. This method also send
 	 * instances to the ensemble classifiers. Or to the single active classifier if
 	 * ensemble size = 1 (default).
-	 * 
+	 *
 	 * New BKG classifiers and switching from and to CH may also need to be here.
 	 *
 	 * This also trains base classifiers, track warning and drifts, and orchestrate the comparisons and replacement of classifiers.
@@ -224,36 +224,36 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 	 * - 6 Check for drifts and warnings only if drift detection is enabled
 	 * - 7.1 Check for warning only if the warning window is active.
 	 * - 7.1.1 Otherwise update the topology (this is done as long as there is no active warnings).
-	 * - Step 7.2 Update warning detection adding latest error  
+	 * - Step 7.2 Update warning detection adding latest error
 	 * - Step 7.2.0 Check if there was a change (warning signal). If so, start warning window;
 	 * - Step 7.2.1 Update the warning detection object for the current object.
 	 * 			  This effectively resets changes made to the object while it was still a bkglearner.
 	 * - Step 7.2.2 Start warning window.
 	 * - 7.3 Check for drift
 	 * - 8: Log training event
-	 * 
+	 *
 	 * The method below implements the following lines of the algorithm:
 	 * - Line 1: start topology
 	 * - Lines 2-3: initialize ensemble (create base classifiers) and lists.
-	 * The rest of the lines of the algorithm are triggered from here 
+	 * The rest of the lines of the algorithm are triggered from here
 	 * - Line 4-6: ClassifierTrain(c, x, y) -> // Train c on the current instance (x, y).
-	 * - Lines 13-15 if warning detection is disabled, update this topology
-	 * - Line 16-20: If a warning is detected, start warning window and clear buffer W.	 *  
-	 * - Lines 7-21: warningDetection: 
-	 * - Lines 22-35: driftDetection: 
+	 * - Lines 14-15 if warning detection is disabled, update this topology
+	 * - Line 16-19: If a warning is detected, start warning window and clear buffer W.	 *
+	 * - Lines 7-20: warningDetection:
+	 * - Lines 22-33: driftDetection:
 	 */
 	@Override
 	public void trainOnInstanceImpl(Instance instance) {
 		++this.instancesSeen;
-        if(this.active == null || (!this.disableDriftDetectionOption.isSet() && this.topology == null)) 
+        if(this.active == null || (!this.disableDriftDetectionOption.isSet() && this.topology == null))
     			init(instance); // Step 0: Initialization
 
 		// Step 1: Update error in concept history learners
 		if (!this.disableRecurringDriftDetectionOption.isSet() && this.CH != null
 				&& this.CH.getWarnings().containsValue(true) && this.CH.size() > 0) {
-			this.CH.updateHistoryErrors(instance);	
+			this.CH.updateHistoryErrors(instance);
 		} // Steps 2-4: Iterate through the ensemble for following steps (active and bkg classifiers)
-		updateEvaluators(instance); 
+		updateEvaluators(instance);
 		
 		// Step 5: Train base classifier (Lines 4-6)
 		this.active.trainOnInstance(instance, this.instancesSeen);
@@ -263,20 +263,20 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 		// System.out.println("this top size:" + this.topology.getNumberOfPrototypesCreated());
 
 		// Step 6: Check for drifts and warnings only if drift detection is enabled
-		if (!this.disableDriftDetectionOption.isSet()) { 	
+		if (!this.disableDriftDetectionOption.isSet()) {
 			boolean correctlyClassified = this.correctlyClassifies(instance);
 			if (this.isOnWarningWindow) trainDuringWarningImpl(instance); // Step 7.1: update actions on warning window
-			else this.topology.trainOnInstanceImpl(instance); // Step 7.1.1: Lines 13-15: otherwise train topology			
+			else this.topology.trainOnInstanceImpl(instance); // Step 7.1.1: Lines 14-15: otherwise train topology
 			// System.out.println(this.instancesSeen+" "+this.isOnWarningWindow);
 			
-			// Update the WARNING detection method 
-			this.warningDetectionMethod.input(correctlyClassified ? 0 : 1); 
+			// Update the WARNING detection method
+			this.warningDetectionMethod.input(correctlyClassified ? 0 : 1);
 			if (this.warningDetectionMethod.getChange()) initWarningWindow(); // Step 7.2.2: new warning?
 			
 			// Update the DRIFT detection method and check if there was a change: line 22-23 drift detected?
-			this.driftDetectionMethod.input(correctlyClassified ? 0 : 1);			
+			this.driftDetectionMethod.input(correctlyClassified ? 0 : 1);
 			if (this.driftDetectionMethod.getChange()) driftHandlingImpl(correctlyClassified); // Step 7.3: new drift?
-		} 
+		}
 		// Step 8: Register training example in log
 		if (this.eventsLogFile != null && this.logLevelOption.getValue() >= 2)
 			logEvent(getTrainExampleEvent());
@@ -342,7 +342,7 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 		if (!this.disableDriftDetectionOption.isSet() && this.topology == null) {
 			this.topology = new Topology(this.topologyLearnerOption); // algorithm line 1
 			this.topology.resetLearningImpl();
-		} 
+		}
 		if (this.active == null) { // algorithm lines 2-3
 			// Init the ensemble.
 			BasicClassificationPerformanceEvaluator classificationEvaluator = (BasicClassificationPerformanceEvaluator)
@@ -352,7 +352,7 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 			if (!this.disableRecurringDriftDetectionOption.isSet()) CH = new ConceptHistory(this.distThresholdOption.getValue());
 			this.W = (Instances) instance.copy().dataset();
 			this.W.delete();
-			this.isOnWarningWindow = false;  
+			this.isOnWarningWindow = false;
 
 			// START: TO BE REMOVED ONCE THE LOGS ARE NO LONGER REQUIRED
 			try { // Start events logging and print headers
@@ -376,12 +376,12 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 					false, // is bkg?
 					!this.disableRecurringDriftDetectionOption.isSet(),
 					false, // first classifier is not in the CH.
-					new Window(this.defaultWindowOption.getValue(), 
+					new Window(this.defaultWindowOption.getValue(),
 							1, // size of increments/decrements
-							this.minWindowSizeOption.getValue(), 
+							this.minWindowSizeOption.getValue(),
 							0.65, // "Decision threshold for recurring concepts (-1 = threshold option disabled)."
 							false, // rememberConceptWindowOption?
-							this.resizeAllWindowsOption.isSet() ? true : false, 
+							this.resizeAllWindowsOption.isSet() ? true : false,
 							0), // "Policy to update the size of the window."
 					null); // internalEvaluator window starts as NULL
 		}
@@ -402,23 +402,23 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 	 * This method implements all the actions that happen when the warning detection is enabled.
 	 *
 	 * Some of the following lines of the algorithm EPCH are implemented here:
-	 * - Lines 7-9: Disable warnings after a certain period of time. False warnings handling at buffer W level 
-	 * - Line 10: if (size(W) 𝝐 (𝟏, 𝝁)) ->In warning window
-	 * - Line 11: Train the background classifier
-	 * - Line 12: Add instance to the buffer of instances during warning
+	 * - Lines 7-10: Disable warnings after a certain period of time. False warnings handling at buffer W level
+	 * - Line 11: if (size(W) 𝝐 (𝟏, 𝝁)) ->In warning window
+	 * - Line 12: Train the background classifier
+	 * - Line 13: Add instance to the buffer of instances during warning
 	 *
 	 * The steps followed for this can be seen below:
-	 * - Step 1 Disable warning if a length threshold is reached - Lines 7-10
+	 * - Step 1 Disable warning if a length threshold is reached - Lines 7-11
 	 * - Step 2 If the classifier is in the warning window, train the bkg classifier and add the current instance to W.
 	 *
 	 */
 	protected void trainDuringWarningImpl(Instance inst) {
-		// Step 1: Check if the warning window should be disabled (Lines 7-9) 
+		// Step 1: Check if the warning window should be disabled (Lines 7-10)
 		// TODO: we could also disable warnings by using a signal to noise ratio variation of the overall classifier during warning
 		if (this.W.numInstances() > this.warningWindowSizeThresholdOption.getValue()) resetWarningWindow(true); // Line 8
-		// TODO: is this reset necessary? is there any scenario where this causes issues as reseted just before drift?		
+		// TODO: is this reset necessary? is there any scenario where this causes issues as reseted just before drift?
 		else {
-			// Step 2: Either warning window training/buffering or topology update (Lines 10-15)
+			// Step 2: Either warning window training/buffering or topology update (Lines 11-15)
 			this.active.bkgLearner.classifier.trainOnInstance(inst); // Line 11
 			this.W.add(inst.copy()); // Line 12
 		}
@@ -427,14 +427,14 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 	
 	protected void resetWarningWindow(boolean resetBkgLearner){
 		if (resetBkgLearner) {
-			this.active.bkgLearner = null; // Lines 8 and 19
+			this.active.bkgLearner = null; // Lines 8 and 18
 			this.active.internalWindowEvaluator = null;
 			this.active.tmpCopyOfClassifier = null;
 			System.out.println("BKG AND TMP CLASSIFIERS AND INTERNAL WINDOW RESTARTED");
 		}
 		this.warningDetectionMethod = ((ChangeDetector) getPreparedClassOption(this.warningDetectionMethodOption)).copy(); // restart warning
 		System.out.println("W size was: "+W.numInstances());
-		this.W.delete(); // Lines 8 and 19 (it also initializes the object W)
+		this.W.delete(); // Lines 9 and 19 (it also initializes the object W)
 		this.isOnWarningWindow = false;
 		if (!this.disableRecurringDriftDetectionOption.isSet()) this.CH.decreaseNumberOfWarnings(0); // update applicable concepts
 	}
@@ -455,12 +455,12 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 		this.lastWarningOn = this.instancesSeen;
 		this.numberOfWarningsDetected++;
 		
-		// Step 0 (Line 19)
-        resetWarningWindow(true); 
+		// Step 0 (Lines 17-19)
+    resetWarningWindow(true);
 
 		// Step 1 Update last error and make a backup of the current classifier
 		if (!this.disableRecurringDriftDetectionOption.isSet()) {
-			this.active.saveCurrentConcept(this.instancesSeen); // line 17: Save a tmp copy of c as snapshot
+			this.active.saveCurrentConcept(this.instancesSeen); // line 18: Save a tmp copy of c as snapshot
 		}
 		// Step 2: Update of objects with warning.
 		if (!disableRecurringDriftDetectionOption.isSet()) {
@@ -470,7 +470,7 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 		if (this.eventsLogFile != null && this.logLevelOption.getValue() >= 1) logEvent(getWarningEvent()); // Log this
 
 		// Step 3: Create background Classifier
-		this.active.createBkgClassifier(this.lastWarningOn); // line 18: create background classifier
+		this.active.createBkgClassifier(this.lastWarningOn); // line 19: create background classifier
 		this.isOnWarningWindow = true;
 	}
 
@@ -485,7 +485,7 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 	 * - 1 Compare DT results using Window method and pick the best one between CH and bkg classifier.
 	 *     It returns the best classifier in the object of the bkgLearner if there is not another base classifier
 	 *      with lower error than active classifier (and driftDecisionMechanism > 0), then a false alarm is raised.
-	 *     This step belong to line 32 in the algorithm: c = FindClassifier(c, b, GH) -> Assign best transition to next state.
+	 *     This step belong to line 29 in the algorithm: c = FindClassifier(c, b, GH) -> Assign best transition to next state.
 	 * - 2 Orchestrate all the actions if the drift is confirmed and there is not a false alarm.
 	 * - 4 Decrease amount of warnings in concept history and from evaluators
 	 * - 3 reset base learner
@@ -495,14 +495,13 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 	 * Insertion in CH (Lines 24-28)
 	 * 	line 24: get prototypes from topology
 	 * 	line 25: Group for storing old state
-	 * 	line 26-28: create a placeholder for a group represented by 'tmpPrototypes'
-	 * Retrieval from CH and refresh (lines 29-35)
-	 * 	line 29: push current classifier to Gc
-	 * 	line 30: Update topology on Gc
-	 * 	line 31: Group for retrieval of next state
-	 *  lines 32-33: In method switchActiveClassifier
-	 * 	line 34: Add the examples during warning to a new topology.
-	 * 	line 35: Empty list W
+	 * 	line 26-27: create a new group represented by 'tmpPrototypes' from Tc
+	 * Retrieval from CH and refresh (lines 28-32)
+	 * 	line 28: push current classifier to Gc
+	 * 	line 29: Update topology on Gc
+	 * 	line 30: Group for retrieval of next state (selectDrift()) - In method switchActiveClassifier
+	 * 	line 31: Add the examples during warning to a new topology.
+	 * 	line 32: reset list W and warning flag
 	 */
 	protected void driftHandlingImpl(boolean correctlyClassified) {
 		this.lastDriftOn = this.instancesSeen;
@@ -516,18 +515,18 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 			System.out.println("DRIFT DETECTED!");
 
 			// Retrieval from CH
-			if (!this.disableRecurringDriftDetectionOption.isSet()) { // step 1: lines 30-33 of the algorithm
+			if (!this.disableRecurringDriftDetectionOption.isSet()) { // step 1: lines 29-31 of the algorithm
 				// Start retrieval from CH (TODO: W should only be used if warning detection is enabled. same for topologies?)
 				falseAlarm = switchActiveClassifier(this.CH.findGroup(this.W)); // TODO: refactor so false alarm is checked by an specific method
 			} else if (this.eventsLogFile != null && this.logLevelOption.getValue() >= 1)  // TODO: remove this.eventsLogFile != null as a condition
 				logEvent(getBkgDriftEvent());  // TODO. Refactor this logEvent function so it's inside of 'registerDrift' and not wrapping it
 			if (!falseAlarm) {  // Step 2
-				// Insertion in CH (Lines 24-27)
-				Instances tmpPrototypes = this.topology.getPrototypes(); // line 24
+				// Insertion in CH (Lines 23-26)
+				Instances tmpPrototypes = this.topology.getPrototypes(); // line 23
 				System.out.println();
 				System.out.println("Pc size:" + this.topology.getNumberOfPrototypesCreated());
-				int previousTopologyGroupId = this.CH.findGroup(tmpPrototypes); // line 25
-				if (this.CH.size() == 0 || previousTopologyGroupId == -1) { // line 26
+				int previousTopologyGroupId = this.CH.findGroup(tmpPrototypes); // line 24
+				if (this.CH.size() == 0 || previousTopologyGroupId == -1) { // line 25
 					previousTopologyGroupId = this.groupsSeen++;
 					System.out.println("CREATING NEW GROUP: " + previousTopologyGroupId); // TODO: remove once debugged. check that numbers are added correctly
 					this.CH.createNewGroup(previousTopologyGroupId, this.topology.clone()); //, this.newTopology); // line 27
@@ -538,17 +537,17 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 				this.active.internalWindowEvaluator.setEvaluatorType("CH"); // for debugging
 				this.CH.addLearnerToGroup(previousTopologyGroupId, this.active.tmpCopyOfClassifier); // line 28  // debug. check that this is not a duplicate. that it's a separate object.
 
-				if (updateGroupTopologiesOption.isSet()) { // line 29
+				if (updateGroupTopologiesOption.isSet()) { // not in v5 of algorithm (line 29 in v4)
 					// OJO: esta linea de abajo necesita agregar .clone/.copy en algun sitio, ya que no esta creando objetos nuevos y  hace que el updatetopology de abajo actualice el objeto de grupo de CH
-					// this.CH.setGroupTopology(previousTopologyGroupId, 
-					//		updateTopology(this.CH.copyTopologyFromGroup(previousTopologyGroupId), this.topology.getPrototypes())); 
+					// this.CH.setGroupTopology(previousTopologyGroupId,
+					//		updateTopology(this.CH.copyTopologyFromGroup(previousTopologyGroupId), this.topology.getPrototypes()));
 					// asuarez 02-06.2019. quiza esto incluso fuese mas adecuado
 					this.CH.setGroupTopology(previousTopologyGroupId, this.topology.clone()); // pero entonces perderiamos mucho historico..
 				}
 
 				this.active.reset(); // reset base classifier and transition to bkg or recurring learner (step 3)
 				// Reset warning related params (but not the learners as these are used at the next step)
-				if (this.newTopology != null) this.topology = updateTopology(this.newTopology.clone(), this.W); // line 33
+				if (this.newTopology != null) this.topology = updateTopology(this.newTopology.clone(), this.W); // line 31
 				/* System.out.println("**ññññññññ***");
 				System.out.println(this.topology.getNumberOfPrototypesCreated());
 				if (this.newTopology != null)
@@ -556,7 +555,7 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 				else
 					System.out.println("null");
 				System.out.println("**ññññññññ***");*/
-				resetWarningWindow(false); // step 4 and line 34. false as argument as the bkg related params are reseted in the prior line.
+				resetWarningWindow(false); // step 4 and line 32. false as argument as the bkg related params are reseted in the prior line.
 			}
 		} else {
 			System.out.println("There weren't enough prototypes in the topology or instances in W.");
@@ -579,7 +578,7 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 	 */
 	protected boolean registerDriftFalseAlarm() {
 		if (this.eventsLogFile != null && this.logLevel >= 0) logEvent(getFalseAlarmEvent()); // TODO: refactor
-		// this.newTopology = null; // then Pn = Pc  (line 32)  // not needed as null by default in drifthandling method
+		// this.newTopology = null; // then Pn = Pc  (line 30)  // not needed as null by default in drifthandling method
 		return true;
 	}
 
@@ -591,7 +590,7 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 		if (this.eventsLogFile != null && this.logLevel >= 0)
 			logEvent(getRecurringDriftEvent(indexOfBestRanked, historyGroup));  // TODO: refactor
 		this.active.bkgLearner = this.CH.copyConcept(historyGroup, indexOfBestRanked);
-		this.newTopology = this.CH.copyTopologyFromGroup(historyGroup);  // then Pn = Ph  (line 32)
+		this.newTopology = this.CH.copyTopologyFromGroup(historyGroup);  // then Pn = Ph  (line 30)
 		this.newTopology.resetId();
 	}
 
@@ -602,9 +601,9 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 	protected void registerBkgDrift() {
 		// Register background drift
 		if (this.eventsLogFile != null && this.logLevel >= 0) logEvent(getBkgDriftEvent());  // TODO: refactor
-		this.newTopology = this.topology.clone(); // line 32  (new Topology does not create a new object due to the meta class for the clusterer)
+		this.newTopology = this.topology.clone(); // line 30  (new Topology does not create a new object due to the meta class for the clusterer)
 		this.newTopology.resetId();
-		this.newTopology.resetLearningImpl(); // line 32
+		this.newTopology.resetLearningImpl(); // line 30
 	}
 
 	// IDENTIFICATION OF NEXT STATE
@@ -614,20 +613,20 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 	 * It also selects the next classifier to be active, or it raises a false alarm
 	 * if the drift should be reconsidered.
 	 *
-	 * It implements the lines 32-33 of the algorithm.
-	 *  lines 32-33: get topology of the group (methods 'registerDrift...') and retrieve the best classifier
+	 * It implements the line 30 of the algorithm.
+	 *  get topology of the group (methods 'registerDrift...') and retrieve the best classifier
 	 *
 	 * -----------------------------------------------------------------------------------------------------------------
 	 * False alarms depend on the drift decision mechanism
 	 * -----------------------------------------------------------------------------------------------------------------
 	 *
 	 * False alarms are taken into consideration for drifts (the warning will be still active
-	 * even if a false alarm is raised for a drift in the same active classifier). 
-	 * If the background learner is NULL, we consider that the drift signal may have been caused 
+	 * even if a false alarm is raised for a drift in the same active classifier).
+	 * If the background learner is NULL, we consider that the drift signal may have been caused
 	 * by a too sensitive drift detection parameterization. In this case, it's clearly
 	 * too soon to change the active classifier. Therefore we raise a drift signal.
 	 *
-	 * We also raise a false alarm when the active classifier obtains less error than the 
+	 * We also raise a false alarm when the active classifier obtains less error than the
 	 * bkg classifier and all of the classifiers from the CH.
 	 *
 	 * -----------------------------------------------------------------------------------------------------------------
@@ -650,7 +649,7 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 		double errorOfBestRanked = -1.0;
 		HashMap<Integer, Double> ranking = new HashMap<Integer, Double> ();
 		
-		// 1 Raise a false alarm for the drift if the background learner is not ready 
+		// 1 Raise a false alarm for the drift if the background learner is not ready
 		if (this.active.bkgLearner == null) return registerDriftFalseAlarm();
 		    
 		// 2 Retrieve best applicable classifier from Concept History (if a CH group applies)
@@ -692,13 +691,13 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 				top.trainOnInstanceImpl((Instance) w2.get(i));
 		        	if(i+1==w2.numInstances()) i = -1;
 		    }
-		} else { */			
+		} else { */
 			// We add them once
 		for (int instPos = 0; instPos < w2.numInstances(); instPos++) {
 			top.trainOnInstanceImpl(w2.get(instPos).copy());
 			// System.out.println("prototypes created in topology:" + top.getNumberOfPrototypesCreated());
 		}
-		// }						
+		// }
 		return top; // if topology (Pc) is global, then we don´t need to return this here
 	}
 		
@@ -965,9 +964,9 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 		}
 
 		public EPCHBaseLearner(int indexOriginal, Classifier classifier, BasicClassificationPerformanceEvaluator evaluatorInstantiated,
-				long instancesSeen, boolean useDriftDetector, boolean isBackgroundLearner,boolean useRecurringLearner, boolean isOldLearner, 
+				long instancesSeen, boolean useDriftDetector, boolean isBackgroundLearner,boolean useRecurringLearner, boolean isOldLearner,
 				Window windowProperties, DynamicWindowClassificationPerformanceEvaluator bkgInternalEvaluator) {
-			init(indexOriginal, classifier, evaluatorInstantiated, instancesSeen, useDriftDetector, isBackgroundLearner, 
+			init(indexOriginal, classifier, evaluatorInstantiated, instancesSeen, useDriftDetector, isBackgroundLearner,
 					useRecurringLearner, isOldLearner, windowProperties, bkgInternalEvaluator);
 		}
 
@@ -1067,7 +1066,7 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 			} System.out.println("------------------------------");
 
 			// 4 Create a new bkgLearner object
-			this.bkgLearner = new EPCHBaseLearner(indexOriginal, bkgClassifier, bkgEvaluator, lastWarningOn, this.useDriftDetector, 
+			this.bkgLearner = new EPCHBaseLearner(indexOriginal, bkgClassifier, bkgEvaluator, lastWarningOn, this.useDriftDetector,
 					true, this.useRecurringLearner, false, this.windowProperties, bkgInternalWindowEvaluator);
 		}
 
@@ -1087,20 +1086,20 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 		*/
 		public void saveCurrentConcept(long instancesSeen) {
 			// step 1
-			this.lastError = this.evaluator.getFractionIncorrectlyClassified(); 
+			this.lastError = this.evaluator.getFractionIncorrectlyClassified();
 			// step 2
-			EPCHBaseLearner tmpConcept = new EPCHBaseLearner(this.indexOriginal, this.classifier.copy(), 
-					(BasicClassificationPerformanceEvaluator) this.evaluator.copy(), this.createdOn, this.useDriftDetector, 
+			EPCHBaseLearner tmpConcept = new EPCHBaseLearner(this.indexOriginal, this.classifier.copy(),
+					(BasicClassificationPerformanceEvaluator) this.evaluator.copy(), this.createdOn, this.useDriftDetector,
 					true, useRecurringLearner, true, this.windowProperties.copy(), null);
 			// step 3
 			this.tmpCopyOfClassifier = new Concept(tmpConcept, this.createdOn,
 					this.evaluator.getPerformanceMeasurements()[0].getValue(), instancesSeen);
-			this.tmpCopyOfClassifier.setErrorBeforeWarning(this.lastError); 
+			this.tmpCopyOfClassifier.setErrorBeforeWarning(this.lastError);
 		}
 	}
 
 	protected class Concept {
-		protected int ensembleIndex; // position that it had in the ensemble when this supports many active classifiers. 
+		protected int ensembleIndex; // position that it had in the ensemble when this supports many active classifiers.
 		protected int historyIndex; // id in concept history
 
 		// Stats
@@ -1228,7 +1227,7 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 				inst = (Instance) this.auxInst.copy();
 				for (int j = 0; j < prototype.w.length; j++) inst.setValue(j, prototype.w[j]);
 				tmp.add(inst);
-			} 
+			}
 			return tmp;
 		}
 		
@@ -1270,8 +1269,8 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 		// method changed on 01-06-2019
 		public Group(int id, ClassOption topologyLearnerOption) {
 			this.id = id; // nextID();
-			this.conceptCluster = new Topology(topologyLearnerOption);			
-			this.groupList = new ConcurrentHashMap<Integer, Concept>();		
+			this.conceptCluster = new Topology(topologyLearnerOption);
+			this.groupList = new ConcurrentHashMap<Integer, Concept>();
 		}
 		
 		// method added on 01-06-2019
@@ -1410,7 +1409,7 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 		/**
 		 * This method decreases the amount of warnings in concept history and from evaluators
 		 * */
-		public void decreaseNumberOfWarnings(int ensemblePos) { 
+		public void decreaseNumberOfWarnings(int ensemblePos) {
 			this.classifiersOnWarning.put(ensemblePos, false);
 			if (this.history != null && this.history.size() > 0) {
 				// This adds it as an applicable concept to all the groups, as we don't know its group yet
@@ -1427,7 +1426,7 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 			}
 		}
 		
-		/** Creation of new group and pushing of this to the CH 
+		/** Creation of new group and pushing of this to the CH
 		protected void createNewGroup(int groupId, Instances tmpPrototypes, ClassOption learnerOption) { // , Topology newTopology) {
 			Group g = new Group(groupId, learnerOption);
 			g.init(tmpPrototypes);
@@ -1460,7 +1459,7 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 				if (dist < min) {
 					min = dist;
 					group = g.getID();
-				} 
+				}
 				System.out.println("Distance of instances in W to group "+g.getID()+" is "+dist);
 				System.out.println("Learner ID: "+g.getConceptCluster().getLearner().id);
 				System.out.println(g.getTopologyPrototypes().numInstances()+" prototypes in group "+g.getID());
@@ -1514,11 +1513,11 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 		}
 				
 		public void setGroupTopology(int groupID, Topology top) {
-			this.history.get(groupID).setConceptCluster(top); // line 30
+			this.history.get(groupID).setConceptCluster(top); // line 26
 		}
 		
 		public void addLearnerToGroup(int groupID, Concept learner) {
-			this.history.get(groupID).put(learner.historyIndex, learner); // line 29
+			this.history.get(groupID).put(learner.historyIndex, learner); // line 28
 		}
 		
 		public Collection<Concept> getConceptsFromGroup(int groupID){
