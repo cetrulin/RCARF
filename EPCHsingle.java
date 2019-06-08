@@ -39,6 +39,9 @@ import moa.core.DoubleVector;
 import moa.core.InstanceExample;
 import moa.core.Measurement;
 import moa.options.ClassOption;
+import weka.core.neighboursearch.LinearNNSearch;
+import weka.core.neighboursearch.NearestNeighbourSearch;
+import weka.filters.Filter;
 // import weka.gui.beans.Clusterer;
 import moa.classifiers.AbstractClassifier;
 import moa.classifiers.Classifier;
@@ -49,9 +52,12 @@ import moa.classifiers.igngsvm.gng.GUnit;
 import moa.evaluation.BasicClassificationPerformanceEvaluator;
 import moa.evaluation.DynamicWindowClassificationPerformanceEvaluator;
 import moa.evaluation.LearningPerformanceEvaluator;
+import weka.filters.supervised.instance.WilsonEditing;
 
 import com.yahoo.labs.samoa.instances.Instance;
 import com.yahoo.labs.samoa.instances.Instances;
+import com.yahoo.labs.samoa.instances.SamoaToWekaInstanceConverter;
+import com.yahoo.labs.samoa.instances.WekaToSamoaInstanceConverter;
 
 /**
  * Evolving Pool of Classifiers with History
@@ -86,7 +92,7 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 			"Should the algorithm use drift detection? If disabled then bkg learner is also disabled.");
 
 	public FlagOption disableRecurringDriftDetectionOption = new FlagOption("disableRecurringDriftDetection", 'r',
-			"Should the algorithm save old learners to compare against in the future? If disabled then recurring concepts are not handled explicitely.");
+			"Should the algorithm save old learners to compare against in the future? If disabled then recurring concepts are not handled explicitly.");
 
 	public IntOption defaultWindowOption = new IntOption("defaultWindow", 'd',
 			"Number of rows by default in Dynamic Sliding Windows.", 50, 1, Integer.MAX_VALUE);
@@ -111,10 +117,10 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 			LearningPerformanceEvaluator.class, "BasicClassificationPerformanceEvaluator");
 
 	public IntOption warningWindowSizeThresholdOption = new IntOption("WarningWindowSizeThreshold", 'i',
-			"Threshold for warning window size that defines a false a alarm.", 1000, 1, Integer.MAX_VALUE);
+			"Threshold for warning window size that disables a warning.", 1000, 1, Integer.MAX_VALUE);
 
 	public FloatOption distThresholdOption = new FloatOption("distThreshold", 't',
-			"Max distance allowed between topologies to be considered part of the same group.", 50000, 0, Float.MAX_VALUE);
+			"Max distance allowed between topologies to be considered part of the same group.", 0.01, 0.000000000000001, Float.MAX_VALUE);
 	
 	public IntOption minTopologySizeForDriftOption = new IntOption("minTopologySizeForDrift", 'a',
 			"Minimum number of prototypes created before allowing a drift.", 1, 1, Integer.MAX_VALUE);
@@ -164,6 +170,8 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 	int conceptsSeen;
 	int groupsSeen;
 	boolean isOnWarningWindow;  // TODO: this flag could be removed, as the size of W is enough to know this.
+	
+	protected boolean debug_internalev = false;
 	
 	///////////////////////////////////////
 	//
@@ -417,10 +425,19 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 		// TODO: we could also disable warnings by using a signal to noise ratio variation of the overall classifier during warning
 		if (this.W.numInstances() > this.warningWindowSizeThresholdOption.getValue()) resetWarningWindow(true); // Line 8
 		// TODO: is this reset necessary? is there any scenario where this causes issues as reseted just before drift?
-		else {
+		else { 		 	
 			// Step 2: Either warning window training/buffering or topology update (Lines 11-15)
 			this.active.bkgLearner.classifier.trainOnInstance(inst); // Line 11
 			this.W.add(inst.copy()); // Line 12
+			
+			// DEBUG
+			if (debug_internalev) {
+				System.out.println("------------------");
+				System.out.println("W size: "+W.size());
+				System.out.println("Internal window size: "+this.active.internalWindowEvaluator.getCurrentSize(0));
+				System.out.println("BKG Internal window size: "+this.active.bkgLearner.internalWindowEvaluator.getCurrentSize(0));
+				System.out.println("------------------");
+			}
 		}
 		// System.out.println("SIZE OF W: "+ W.numInstances());
 	}
@@ -534,7 +551,6 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 							
 				// Move copy of active classifier made before warning to Concept History.
 				this.active.tmpCopyOfClassifier.addHistoryID(this.conceptsSeen++);
-				this.active.internalWindowEvaluator.setEvaluatorType("CH"); // for debugging
 				this.CH.addLearnerToGroup(previousTopologyGroupId, this.active.tmpCopyOfClassifier); // line 28  // debug. check that this is not a duplicate. that it's a separate object.
 
 				if (updateGroupTopologiesOption.isSet()) { // not in v5 of algorithm (line 29 in v4)
@@ -702,7 +718,7 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 	}
 		
 	/* Compute distances between Instances as seen in GNG for arrays (GUnit objects). **/
-	public double dist(Instance w1,Instance w2){
+	public double computeDistance(Instance w1,Instance w2){
 		double sum = 0;
 		for (int i = 0; i < w1.numAttributes(); i++) {
 			sum += Math.pow(w1.value(i)-w2.value(i),2);
@@ -750,7 +766,15 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 	}
 
 	protected boolean activeBetterThanBKGbaseClassifier() {
-		// If drift decision mechanism is == 2
+		// DEBUG
+		System.out.println("ACTIVE: "+((DynamicWindowClassificationPerformanceEvaluator) this.active.internalWindowEvaluator)
+			.getFractionIncorrectlyClassified(this.active.indexOriginal));
+		System.out.println("BKG: "+((DynamicWindowClassificationPerformanceEvaluator)
+				this.active.bkgLearner.internalWindowEvaluator).getFractionIncorrectlyClassified(this.active.bkgLearner.indexOriginal));
+		System.out.println("activeBetterThanBKGbaseClassifier: "+(((DynamicWindowClassificationPerformanceEvaluator) this.active.internalWindowEvaluator)
+			.getFractionIncorrectlyClassified(this.active.indexOriginal) <= ((DynamicWindowClassificationPerformanceEvaluator)
+			this.active.bkgLearner.internalWindowEvaluator).getFractionIncorrectlyClassified(this.active.bkgLearner.indexOriginal)));
+		
 		return (((DynamicWindowClassificationPerformanceEvaluator) this.active.internalWindowEvaluator)
 			.getFractionIncorrectlyClassified(this.active.indexOriginal) <= ((DynamicWindowClassificationPerformanceEvaluator)
 			this.active.bkgLearner.internalWindowEvaluator).getFractionIncorrectlyClassified(this.active.bkgLearner.indexOriginal));
@@ -760,7 +784,13 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 	}
 
 	protected boolean activeBetterThanCHbaseClassifier(double bestFromCH) {
-		// If drift decision mechanism is == 2
+		//DEBUG
+		System.out.println("ACTIVE: "+((DynamicWindowClassificationPerformanceEvaluator) this.active.internalWindowEvaluator)
+				.getFractionIncorrectlyClassified(this.active.indexOriginal));
+			System.out.println("CH: "+bestFromCH);
+			System.out.println("activeBetterThanCHbaseClassifier: "+(((DynamicWindowClassificationPerformanceEvaluator) this.active.internalWindowEvaluator)
+					.getFractionIncorrectlyClassified(this.active.indexOriginal) <= bestFromCH));
+			
 		return (((DynamicWindowClassificationPerformanceEvaluator) this.active.internalWindowEvaluator)
 			.getFractionIncorrectlyClassified(this.active.indexOriginal) <= bestFromCH);
 
@@ -769,6 +799,13 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 	}
 
 	protected boolean bkgBetterThanCHbaseClassifier(double bestFromCH) {
+		// DEBUG
+		System.out.println("ACTIVE: "+((DynamicWindowClassificationPerformanceEvaluator) this.active.bkgLearner.internalWindowEvaluator)
+				.getFractionIncorrectlyClassified(this.active.bkgLearner.indexOriginal));
+		System.out.println("CH: "+bestFromCH);
+		System.out.println("bkgBetterThanCHbaseClassifier: "+(bestFromCH <= ((DynamicWindowClassificationPerformanceEvaluator) this.active.bkgLearner.internalWindowEvaluator)
+				.getFractionIncorrectlyClassified(this.active.bkgLearner.indexOriginal)));
+	
 		// this.bkgLearner.indexOriginal - pos of bkg classifier if it becomes active in the ensemble (always same pos than the active)
 		return (bestFromCH <= ((DynamicWindowClassificationPerformanceEvaluator) this.active.bkgLearner.internalWindowEvaluator)
 				.getFractionIncorrectlyClassified(this.active.bkgLearner.indexOriginal));
@@ -1047,8 +1084,7 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 			bkgClassifier.resetLearning();
 
 			// 2 Resets the evaluator
-			BasicClassificationPerformanceEvaluator bkgEvaluator = (BasicClassificationPerformanceEvaluator) this.evaluator
-					.copy();
+			BasicClassificationPerformanceEvaluator bkgEvaluator = (BasicClassificationPerformanceEvaluator) this.evaluator.copy();
 			bkgEvaluator.reset();
 			System.out.println("------------------------------");
 			System.out.println("Create estimator for BKG classifier in position: "+this.indexOriginal);
@@ -1061,8 +1097,8 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 						this.windowProperties.getMinSize(), this.lastError,
 						this.windowProperties.getDecisionThreshold(), true, this.windowProperties.getResizingPolicy(),
 						this.indexOriginal, "created for BKG classifier in ensembleIndex #" + this.indexOriginal);
-				bkgInternalWindowEvaluator.reset();
 				bkgInternalWindowEvaluator.setEvaluatorType("BKG");  // for debugging
+				bkgInternalWindowEvaluator.reset();
 			} System.out.println("------------------------------");
 
 			// 4 Create a new bkgLearner object
@@ -1157,6 +1193,7 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 					new DynamicWindowClassificationPerformanceEvaluator(ePW.getSize(), ePW.getIncrements(),ePW.getMinSize(),
 							ePos.lastError, ePW.getDecisionThreshold(), ePW.getDynamicWindowInOldClassifiersFlag(), ePW.getResizingPolicy(),
 							ePos.indexOriginal, "created for old-retrieved classifier in ensembleIndex #" + ePos.indexOriginal);
+			tmpInternalWindow.setEvaluatorType("CH");
 			tmpInternalWindow.reset();
 			this.setInternalEvaluator(tmpInternalWindow);
 		}
@@ -1318,6 +1355,7 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 	protected class ConceptHistory {
 		
 		double maxDistanceThreshold;
+		protected boolean debugNN = true;
 
 		// Concurrent Concept History List
 		protected HashMap<Integer, Group> history; // now this is a list of groups
@@ -1445,17 +1483,17 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 		 * This method receives the current list of training examples received during
 		 * the warning window and checks what's the closest group.
 		 */
-		protected int findGroup(Instances w2) {
+		protected int findGroup(Instances w1) {
 			double min = Double.MAX_VALUE;
 			double dist = 0;
 			int group = -1;
 
 			// asuarez: Debugging groups
 			System.out.println();
-			System.out.println("There were "+w2.numInstances()+" instances for comparison.");
+			System.out.println("There were "+w1.numInstances()+" instances for comparison.");
 			System.out.println("There are "+this.history.size()+" groups.");
 			for (Group g : this.history.values()) {
-				dist = getAbsoluteSumDistances(w2, g.getTopologyPrototypes());
+				dist = getMeanDistanceToNN(w1, g.getTopologyPrototypes()) / w1.numInstances();
 				if (dist < min) {
 					min = dist;
 					group = g.getID();
@@ -1481,14 +1519,63 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 		 * This function computes the sum of the distances between every prototype in
 		 * the topology passed and the current list of instances during warning (W)
 		 */
-		protected double getAbsoluteSumDistances(Instances w1, Instances w2) {
+		/*protected double getMeanDistance(Instances w1, Instances w2) {
+			double [] dist = new double[w1.numInstances()];
 			double totalDist = 0.0;
-
 			for (int instPos1 = 0; instPos1 < w1.numInstances(); instPos1++) {
 				for (int instPos2 = 0; instPos2 < w2.numInstances(); instPos2++) {
-					totalDist += dist(w1.get(instPos1), w2.get(instPos2));
-				}
-			} return totalDist;
+					dist[instPos1] += computeDistance(w1.get(instPos1), w2.get(instPos2));
+				} dist[instPos1] = dist[instPos1] / w2.numInstances();
+			} 
+			// Averaging distances
+			for (int i = 0; i < dist.length; i++)  totalDist += dist[i];
+			return totalDist / w1.numInstances();
+		}*/
+		
+		/**
+		 * This function computes the sum of the distances between the nearest prototype in a group's topology 
+ 		 *  and the current list of instances during warning (W)
+		 */
+		protected double getMeanDistanceToNN(Instances w1, Instances topologyPrototypes) {
+			int nPrototypes = 1; // Wilson Editing for the specified number of neighbors
+			Instances nearestPrototypes;
+			System.out.println("\n%%%%%%%%%%%%%%%%%%%%%%%%%\n%%%%%%%%%%%%%%%%%%%%%%%%%\n");
+			try {
+				double [] dist = new double[w1.numInstances()];
+				double totalDist = 0.0;
+				for (int i = 0; i < w1.numInstances(); i++) {
+					nearestPrototypes = getNearestPrototypes(w1.get(i), topologyPrototypes, nPrototypes);
+					for (int j = 0; j < nearestPrototypes.numInstances(); j++) {
+						dist[i] += computeDistance(w1.get(i), nearestPrototypes.get(j)); // squared distance (default in GNG)
+					} dist[i] = dist[i] / nearestPrototypes.numInstances(); // divided by 1 if only 1 neighbour (default)
+					
+					if (this.debugNN) assert nearestPrototypes.numInstances() == nPrototypes; 
+				} 
+				// Averaging distances
+				for (int i = 0; i < dist.length; i++)  totalDist += dist[i];
+				return totalDist / w1.numInstances();
+				
+			} catch (Exception e) {
+				e.printStackTrace();
+			}  
+			return (Double) null; 
+		}
+
+		public Instances getNearestPrototypes(Instance i, Instances topologyPrototypes, int nPrototypes) throws Exception {
+			// Set converters to use WEKAS filters
+			SamoaToWekaInstanceConverter converter = new SamoaToWekaInstanceConverter();
+			WekaToSamoaInstanceConverter deconverter = new WekaToSamoaInstanceConverter();
+			
+			// Instantiate NN search object and return results 
+			NearestNeighbourSearch m_NNSearch = new LinearNNSearch();
+		    m_NNSearch.setInstances(converter.wekaInstances(topologyPrototypes));
+		    //TODO: distances using a kernel => m_NNSearch.getDistances();
+		    return deconverter.samoaInstances(m_NNSearch.kNearestNeighbours(converter.wekaInstance(i), nPrototypes));
+		    
+		    // Instances neighbours = deconverter.samoaInstances(m_NNSearch.kNearestNeighbours(converter.wekaInstance(i), nPrototypes));
+			// if (this.debugNN) System.out.println("SIZE AFTER NN: "+neighbours.numInstances());
+			// if (this.debugNN) System.out.println("TSIZE BEFORE NN:  "+topologyPrototypes.numInstances());
+		    // return neighbours;
 		}
 
 		
