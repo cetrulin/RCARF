@@ -41,8 +41,8 @@ import moa.core.Measurement;
 import moa.options.ClassOption;
 import weka.core.neighboursearch.LinearNNSearch;
 import weka.core.neighboursearch.NearestNeighbourSearch;
-import weka.filters.Filter;
 // import weka.gui.beans.Clusterer;
+
 import moa.classifiers.AbstractClassifier;
 import moa.classifiers.Classifier;
 import moa.classifiers.MultiClassClassifier;
@@ -52,7 +52,6 @@ import moa.classifiers.igngsvm.gng.GUnit;
 import moa.evaluation.BasicClassificationPerformanceEvaluator;
 import moa.evaluation.DynamicWindowClassificationPerformanceEvaluator;
 import moa.evaluation.LearningPerformanceEvaluator;
-import weka.filters.supervised.instance.WilsonEditing;
 
 import com.yahoo.labs.samoa.instances.Instance;
 import com.yahoo.labs.samoa.instances.Instances;
@@ -530,6 +529,7 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 			System.out.println(); System.out.println(); System.out.println();
 			System.out.println(); System.out.println(); System.out.println();
 			System.out.println("DRIFT DETECTED!");
+			System.out.println("The topology has been trained (before the warning) with "+this.topology.getLearner().getInstancesSeen()+" instances so far.");
 
 			// Retrieval from CH
 			if (!this.disableRecurringDriftDetectionOption.isSet()) { // step 1: lines 29-31 of the algorithm
@@ -1537,7 +1537,7 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
  		 *  and the current list of instances during warning (W)
 		 */
 		protected double getMeanDistanceToNN(Instances w1, Instances topologyPrototypes) {
-			int nPrototypes = 1; // Wilson Editing for the specified number of neighbors
+			int nPrototypes = 1; // number of neighbors
 			Instances nearestPrototypes;
 			System.out.println("\n%%%%%%%%%%%%%%%%%%%%%%%%%\n%%%%%%%%%%%%%%%%%%%%%%%%%\n");
 			try {
