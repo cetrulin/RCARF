@@ -553,11 +553,9 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 					this.CH.addLearnerToGroup(previousTopologyGroupId, this.active.tmpCopyOfClassifier); // line 28  // debug. check that this is not a duplicate. that it's a separate object.
 
 					if (updateGroupTopologiesOption.isSet()) { // not in v5 of algorithm (line 29 in v4)
-						// OJO: esta linea de abajo necesita agregar .clone/.copy en algun sitio, ya que no esta creando objetos nuevos y  hace que el updatetopology de abajo actualice el objeto de grupo de CH
-						// this.CH.setGroupTopology(previousTopologyGroupId,
-						//		updateTopology(this.CH.copyTopologyFromGroup(previousTopologyGroupId), this.topology.getPrototypes()));
-						// asuarez 02-06.2019. quiza esto incluso fuese mas adecuado
-						this.CH.setGroupTopology(previousTopologyGroupId, this.topology.clone()); // pero entonces perderiamos mucho historico..
+						// Note: must clone here so subsequent topology updates do not mutate the CH group topology in place.
+						// asuarez 02-06-2019: replacing with the cloned topology (note: this drops older group history).
+						this.CH.setGroupTopology(previousTopologyGroupId, this.topology.clone());
 					}
 				}
 

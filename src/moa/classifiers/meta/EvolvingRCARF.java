@@ -143,7 +143,7 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
 	 *    P2: delta_drift=0.0001, delta_warning = 0.001
 	 *    P3: delta_drift=0.001, delta_warning = 0.01 (fast)
 	 *    P4: delta_drift=0.01, delta_warning = 0.1 
-	 *    P5: delta_drift=0.1, delta_warning = 0.2 (más o menos es el ultra) 
+	 *    P5: delta_drift=0.1, delta_warning = 0.2 (approximately ultra-fast) 
      *********************************/
     
     // P1 = Moderate
@@ -477,7 +477,7 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
         	    ClassOption p_warningDetectionMethodOption = new ClassOption("warningDetectionMethod", 'p',
         	            "Change detector for warnings (start training bkg learner)", EvolvingChangeDetector.class, "EvolvingADWINChangeDetector -a " + p_deltas[p_config][1]);
         	    */
-        		// Andres 19 Agosto. ¿Podria ser esta una manera alternativa y mas limpia de declararlo y pasar los parametros una linea despues?        	    
+        		// Andres 19 Aug: could this be a cleaner way to declare it and pass the parameters on the next line?        	    
         		// Set ADWIN interval parameters depending on the ensemble's position
         		/*EvolvingADWINChangeDetector p_driftDetectionMethod;
         	    EvolvingADWINChangeDetector p_warningDetectionMethod;

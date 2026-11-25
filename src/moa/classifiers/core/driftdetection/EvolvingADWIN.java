@@ -571,8 +571,8 @@ public class EvolvingADWIN extends AbstractMOAObject {
 
     private boolean blnCutexpression(int n0, int n1, double u0, double u1, double v0, double v1, double absvalue, double delta) {
         int n = getWidth();
-        double dd = Math.log(2 * Math.log(n) / delta);     // -- ull perque el ln n va al numerador.
-        // Formula Gener 2008
+        double dd = Math.log(2 * Math.log(n) / delta);     // Note: ln(n) goes in the numerator.
+        // Formula Jan 2008
         double v = getVariance();
         double m = ((double) 1 / ((n0 - mintMinWinLength + 1))) + ((double) 1 / ((n1 - mintMinWinLength + 1)));
         double epsilon = Math.sqrt(2 * m * v * dd) + (double) 2 / 3 * dd * m;

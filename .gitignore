@@ -1,0 +1,17 @@
+# Java / build outputs
+*.class
+*.jar
+build/
+out/
+target/
+
+# Experiment logs
+*_events_log.txt
+
+# OS / IDE
+.DS_Store
+.idea/
+*.iml
+.classpath
+.project
+.settings/
