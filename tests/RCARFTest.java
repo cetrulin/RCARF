@@ -118,7 +118,7 @@ public class RCARFTest {
         legacy.resetLearning();
         for (int i = 0; i < 200; i++) legacy.trainOnInstance(data[i].copy());
 
-        System.out.println("ALL RCARF TESTS PASSED");
+        System.out.println("All RCARF tests passed.");
         System.exit(0);
     }
 }
