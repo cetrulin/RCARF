@@ -77,4 +77,4 @@ java -ea -cp "build:path/to/moa-2017.06.jar:path/to/lib/*" RCARFTest
 ## Notes on Reproducibility
 
 - If you're reproducing the original numbers, check out `fdbdc49`. It keeps bit-exact parity while fixing thread-safety, static `ConceptHistory` collisions, and edge-case crashes.
-- If you want the bug fixes that do change model output, use `4faba24` or later. That commit fixes deep concept copying, `findGroup` min/scaling, dynamic window accuracy-vs-error math, `EvolvingADWINChangeDetector` reset, direct Euclidean NN, and LUFO eviction.
+- If you'd rather use the updated version (which can change model output), start from `4faba24` or later. It adds deep concept copying, `findGroup` min/scaling updates, aligned dynamic window accuracy/error handling, `EvolvingADWINChangeDetector` resets, direct Euclidean NN, and optional LUFO eviction.
