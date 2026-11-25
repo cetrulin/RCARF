@@ -2,7 +2,7 @@
 
 This repo holds the MOA 2017.06 code for **RCARF** (Recurring Concepts Adaptive Random Forest), **EvolvingRCARF**, and the early **EPCH** (Evolving Pool of Classifiers with History) prototypes from my PhD thesis *Adaptive Algorithms For Classification On High-Frequency Data Streams: Application To Finance*.
 
-If you're looking for the newer **GroCH** implementation (MOA 2024.07, CapyMOA, and GNG), head over to [groch-moa](https://github.com/cetrulin/groch-moa).
+`EPCH` here is a work-in-progress early version of **GroCH** (from before it was renamed to `NA` and later `GroCH`). If you're looking for the current **GroCH** implementation (MOA 2024.07, CapyMOA, and GNG), head over to [groch-moa](https://github.com/cetrulin/groch-moa).
 
 ## Repository Layout (MOA 2017.06)
 
@@ -28,7 +28,7 @@ src/
 - **`RCARF`**: The main recurring-concept ensemble. It's base-learner agnostic (`-l`), uses dynamic comparison windows, supports drift decision modes (`-k 0|1|2`), and lets you cap Concept History with LUFO (`-n`).
 - **`EvolvingRCARF`**: Same setup as `RCARF`, except it gives each ensemble slot a different ADWIN sensitivity through `EvolvingADWINChangeDetector`.
 - **`RecurringConceptsAdaptiveRandomForest`**: An older ARF-only (`ARFHoeffdingTree`) version of `RCARF` that I've kept here for reference.
-- **`EPCHsingle` / `EPCH`**: Early GNG topology-grouped Concept History prototypes. You'll need `moa.classifiers.igngsvm.gng.*` from [groch-moa](https://github.com/cetrulin/groch-moa) tag `v0.5-moa2017.06` to compile `EPCHsingle` (`EPCH.java` targets an older 7-arg `GNG` constructor, so it won't compile as-is against that tag).
+- **`EPCHsingle` / `EPCH`**: Work-in-progress early versions of GroCH (prior to the `NA` and `GroCH` renames; see the maintained version in [groch-moa](https://github.com/cetrulin/groch-moa)). You'll need `moa.classifiers.igngsvm.gng.*` from `groch-moa` tag `v0.5-moa2017.06` to compile `EPCHsingle` (`EPCH.java` targets an older 7-arg `GNG` constructor, so it won't compile as-is against that tag).
 
 ## Requirements
 
