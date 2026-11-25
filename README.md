@@ -65,6 +65,15 @@ Key `RCARF` flags:
 - `-r`: Disable recurring concept handling (standard ARF behavior)
 - `-g`: Disable event log file export
 
+## Tests
+
+Compile and run the self-contained regression suite (no JUnit jar required):
+
+```bash
+javac -encoding ISO-8859-1 -cp "build:path/to/moa-2017.06.jar:path/to/lib/*" -d build tests/RCARFTest.java
+java -ea -cp "build:path/to/moa-2017.06.jar:path/to/lib/*" RCARFTest
+```
+
 ## Notes on Reproducibility
 
 - Commit `fdbdc49` preserves **bit-exact parity** with the original repository while fixing thread-safety, static `ConceptHistory` collisions, and edge-case crashes.
