@@ -140,8 +140,10 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
             int trueClass = (int) inst.classValue();
             int predictedClass = Utils.maxIndex(classVotes);
             if (weight > 0.0) {
-                if (this.totalWeightObserved == 0) {
-                    reset(inst.dataset().numClasses()); // are we using the correct one?
+                if (this.weightCorrect == null) {
+                    reset(inst.dataset().numClasses());
+                } else if (this.totalWeightObserved == 0) {
+                    this.numClasses = inst.dataset().numClasses();
                 }
                 this.totalWeightObserved += weight;
                 this.weightCorrect.add(predictedClass == trueClass ? weight : 0);
@@ -405,7 +407,7 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
         	 			// TEST TRACES
         	 			if (debug) System.out.println("estimatorID: "+this.estimatorID+" pos:"+pos+" currentEstimation is: "+estimation(pos));
         	 			if (debug) System.out.println("estimatorID: "+this.estimatorID+" pos:"+pos+" active Model Estimation before Warning was: "+this.priorEstimations.get(pos));
-         			if(estimation(pos) <= this.priorEstimations.get(pos)) {
+         			if((1.0 - estimation(pos)) <= this.priorEstimations.get(pos)) {
          				if (debug) System.out.println("GROWS");
          				this.SizeWindows.put(pos,this.SizeWindows.get(pos)+this.sizeIncrements);
          				}
@@ -429,7 +431,7 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
         	 		case 1:  // working with ERRROR 
              		// size update policy 1 [ min(error(c,w_c)) - priorError ] > threshold -> window size increases
              		//if(priorError!=-1) { .. }
-         			if(estimation(pos) - this.priorEstimations.get(pos) <= this.threshold)
+         			if((1.0 - estimation(pos)) - this.priorEstimations.get(pos) <= this.threshold)
          				this.SizeWindows.put(pos,this.SizeWindows.get(pos)+this.sizeIncrements);
          			else {// otherwise it decreases
      					this.SizeWindows.put(pos,this.SizeWindows.get(pos)-this.sizeIncrements);
@@ -447,9 +449,9 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
         	 		case 2:  // working with ACCURACY 
         	 			//For each c, W_c=s  , where s is an small number / For each iteration, independently of ny situations / a = active model
         	 			//if(priorError==-1) { .. }
-             		double W_a_candidate_0=100-estimation(pos); // or  W_a_candidate_0=getAverageOfErrors(getLastWindow())
-             		double W_a_candidate_1=100-getLargeWindowEstimation(pos);
-             		double W_a_candidate_2=100-getSmallerWindowEstimation (pos);
+             		double W_a_candidate_0=estimation(pos);
+             		double W_a_candidate_1=getLargeWindowEstimation(pos);
+             		double W_a_candidate_2=getSmallerWindowEstimation(pos);
         		
              		if ( W_a_candidate_1 > W_a_candidate_0 && W_a_candidate_1 > W_a_candidate_2 ) // Increase window size
          				this.SizeWindows.put(pos,this.SizeWindows.get(pos)+this.sizeIncrements);

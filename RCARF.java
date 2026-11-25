@@ -189,6 +189,9 @@ public class RCARF extends AbstractClassifier implements MultiClassClassifier {
             "0 does not take into account the performance active base classifier explicitely, at the time of the drift; 1 takes into consideration active classifiers", 
             0, 0, 2);
 
+    public IntOption maxConceptHistorySizeOption = new IntOption("maxConceptHistorySize", 'n',
+            "Maximum concepts stored in Concept History with LUFO eviction (0 = unlimited).", 0, 0, Integer.MAX_VALUE);
+
 	// ////////////////////////////////////////////////
 	// ////////////////////////////////////////////////
     protected static final int FEATURES_M = 0;
@@ -344,7 +347,7 @@ public class RCARF extends AbstractClassifier implements MultiClassClassifier {
   
         // Only initialize Concept History if explicit recurring concepts handling is enabled
         if(!this.disableRecurringDriftDetectionOption.isSet()) {
-			this.conceptHistory = new ConceptHistory();
+			this.conceptHistory = new ConceptHistory(this.maxConceptHistorySizeOption.getValue());
         }
         
         try { // Start events logging and print headers
@@ -546,7 +549,7 @@ public class RCARF extends AbstractClassifier implements MultiClassClassifier {
         			   // Clean the copy afterwards.
         			   if (this.tmpCopyOfModel != null) {
         				   this.tmpCopyOfModel.addHistoryID(conceptHistory.nextID());
-        				   conceptHistory.historyList.put(this.tmpCopyOfModel.historyIndex, this.tmpCopyOfModel);
+        				   conceptHistory.addConcept(this.tmpCopyOfModel);
         				   this.tmpCopyOfModel = null;
         			   }
         			   //// System.out.println("MODEL ADDED TO CONCEPT HISTORY!");
@@ -1067,9 +1070,35 @@ public class RCARF extends AbstractClassifier implements MultiClassClassifier {
     		// Concurrent Concept History List
     		public ConcurrentHashMap<Integer,Concept> historyList = new ConcurrentHashMap<Integer,Concept>();
     		public AtomicInteger lastID = new AtomicInteger(0);
+    		public int maxSize = 0;
     		
     		// List of ensembles with an active warning used as to determine if the history list evaluators should be in use
     		public ConcurrentHashMap<Integer,Boolean> modelsOnWarning = new ConcurrentHashMap<Integer,Boolean>();
+
+    		public ConceptHistory() {
+    			this(0);
+    		}
+
+    		public ConceptHistory(int maxSize) {
+    			this.maxSize = maxSize;
+    		}
+
+    		public synchronized void addConcept(Concept c) {
+    			if (maxSize > 0 && historyList.size() >= maxSize) {
+    				Integer victimKey = null;
+    				int minUses = Integer.MAX_VALUE;
+    				int oldestId = Integer.MAX_VALUE;
+    				for (Concept existing : historyList.values()) {
+    					if (existing.timesUsed < minUses || (existing.timesUsed == minUses && existing.historyIndex < oldestId)) {
+    						minUses = existing.timesUsed;
+    						oldestId = existing.historyIndex;
+    						victimKey = existing.historyIndex;
+    					}
+    				}
+    				if (victimKey != null) historyList.remove(victimKey);
+    			}
+    			historyList.put(c.historyIndex, c);
+    		}
 
 	    public RCARFBaseLearner extractConcept(int key) {
 	    		Concept removed = historyList.remove(key);
@@ -1104,6 +1133,7 @@ public class RCARF extends AbstractClassifier implements MultiClassClassifier {
     		protected long instancesSeen;
     		protected double classifiedInstances;
     		protected double errorBeforeWarning;
+    		protected int timesUsed = 0;
     		
     		// Learner
     		public RCARFBaseLearner ConceptLearner;

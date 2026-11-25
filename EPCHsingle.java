@@ -39,9 +39,6 @@ import moa.core.DoubleVector;
 import moa.core.InstanceExample;
 import moa.core.Measurement;
 import moa.options.ClassOption;
-import weka.core.neighboursearch.LinearNNSearch;
-import weka.core.neighboursearch.NearestNeighbourSearch;
-// import weka.gui.beans.Clusterer;
 
 import moa.classifiers.AbstractClassifier;
 import moa.classifiers.Classifier;
@@ -55,8 +52,6 @@ import moa.evaluation.LearningPerformanceEvaluator;
 
 import com.yahoo.labs.samoa.instances.Instance;
 import com.yahoo.labs.samoa.instances.Instances;
-import com.yahoo.labs.samoa.instances.SamoaToWekaInstanceConverter;
-import com.yahoo.labs.samoa.instances.WekaToSamoaInstanceConverter;
 
 /**
  * Evolving Pool of Classifiers with History
@@ -135,6 +130,9 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 	// Plain-vanilla parameters for the clustering algorithm   // TODO: make it a Clusterer.class
 	public ClassOption topologyLearnerOption = new ClassOption("topologyLearner", 'c', "Clusterer to train.", GNG.class,
 			"GNG -l 100 -m 200 -a 0.5 -d 0.995 -e 0.2 -n 0.006 -c 100 -b");
+
+	public IntOption maxConceptHistorySizeOption = new IntOption("maxConceptHistorySize", 'm',
+			"Maximum concepts stored in Concept History with LUFO eviction (0 = unlimited).", 0, 0, Integer.MAX_VALUE);
 	
 	// public FloatOption stopPercentageOption = new FloatOption("stopPercentageOption", 'P',
 	//		"Stopping criteria as percentage (if 0, the static stopping criteria is )", 0, 0, 100.0);
@@ -356,7 +354,7 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 			      getPreparedClassOption(this.evaluatorOption);
 
 			// Only initialize the Concept History if recurring concepts are enabled
-			if (!this.disableRecurringDriftDetectionOption.isSet()) CH = new ConceptHistory(this.distThresholdOption.getValue());
+			if (!this.disableRecurringDriftDetectionOption.isSet()) CH = new ConceptHistory(this.distThresholdOption.getValue(), this.maxConceptHistorySizeOption.getValue());
 			this.W = (Instances) instance.copy().dataset();
 			this.W.delete();
 			this.isOnWarningWindow = false;
@@ -1145,6 +1143,7 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 		protected long instancesSeen;
 		protected double classifiedInstances;
 		protected double errorBeforeWarning;
+		protected int timesUsed = 0;
 
 		// Learner
 		public EPCHBaseLearner ConceptLearner;  // TODO: should this be a meta learner?
@@ -1323,8 +1322,13 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 		}
 
 		public EPCHBaseLearner copyConcept(int key) {
-			EPCHBaseLearner aux = this.groupList.get(key).getBaseLearner();
-			return aux;
+			Concept concept = this.groupList.get(key);
+			concept.timesUsed++;
+			EPCHBaseLearner orig = concept.getBaseLearner();
+			return new EPCHBaseLearner(orig.indexOriginal, orig.classifier.copy(),
+					(BasicClassificationPerformanceEvaluator) orig.evaluator.copy(), orig.createdOn,
+					orig.useDriftDetector, orig.isBackgroundLearner, orig.useRecurringLearner, orig.isOldLearner,
+					orig.windowProperties != null ? orig.windowProperties.copy() : null, null);
 		}
 
 		// Getters
@@ -1360,6 +1364,7 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 	protected class ConceptHistory {
 		
 		double maxDistanceThreshold;
+		int maxSize;
 		protected boolean debugNN = true;
 
 		// Concurrent Concept History List
@@ -1369,15 +1374,18 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 		protected HashMap<Integer, Boolean> classifiersOnWarning;
 		
 		public ConceptHistory() {
-			this.history = new HashMap<Integer, Group>();
-			this.classifiersOnWarning = new HashMap<Integer, Boolean>();
-			this.maxDistanceThreshold = Float.MAX_VALUE;
+			this(Float.MAX_VALUE, 0);
 		}
 		
 		public ConceptHistory(double distThreshold) {
+			this(distThreshold, 0);
+		}
+
+		public ConceptHistory(double distThreshold, int maxSize) {
 			this.history = new HashMap<Integer, Group>();
 			this.classifiersOnWarning = new HashMap<Integer, Boolean>();
 			this.maxDistanceThreshold = distThreshold;
+			this.maxSize = maxSize;
 		}
 		
 		public void printTopologies() {
@@ -1498,7 +1506,7 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 			System.out.println("There were "+w1.numInstances()+" instances for comparison.");
 			System.out.println("There are "+this.history.size()+" groups.");
 			for (Group g : this.history.values()) {
-				dist = getMeanDistanceToNN(w1, g.getTopologyPrototypes()) / w1.numInstances();
+				dist = getMeanDistanceToNN(w1, g.getTopologyPrototypes());
 				if (dist < min) {
 					min = dist;
 					group = g.getID();
@@ -1511,11 +1519,11 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 			}
 			System.out.println("");
 
-			if (dist < this.maxDistanceThreshold) {
+			if (group != -1 && min < this.maxDistanceThreshold) {
 				System.out.println("The selected group, therefore, is group:"+group);
 				return group;
 			} else {
-				System.out.println("No groups selected as the distance is "+dist+" and the maximum dist allowed is: "+this.maxDistanceThreshold);
+				System.out.println("No groups selected as the distance is "+min+" and the maximum dist allowed is: "+this.maxDistanceThreshold);
 				return -1;
 			}
 		}
@@ -1542,45 +1550,22 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
  		 *  and the current list of instances during warning (W)
 		 */
 		protected double getMeanDistanceToNN(Instances w1, Instances topologyPrototypes) {
-			int nPrototypes = 1; // number of neighbors
-			Instances nearestPrototypes;
-			System.out.println("\n%%%%%%%%%%%%%%%%%%%%%%%%%\n%%%%%%%%%%%%%%%%%%%%%%%%%\n");
-			try {
-				double [] dist = new double[w1.numInstances()];
-				double totalDist = 0.0;
-				for (int i = 0; i < w1.numInstances(); i++) {
-					nearestPrototypes = getNearestPrototypes(w1.get(i), topologyPrototypes, nPrototypes);
-					for (int j = 0; j < nearestPrototypes.numInstances(); j++) {
-						dist[i] += computeDistance(w1.get(i), nearestPrototypes.get(j)); // squared distance (default in GNG)
-					} dist[i] = dist[i] / nearestPrototypes.numInstances(); // divided by 1 if only 1 neighbour (default)
-					
-					if (this.debugNN) assert nearestPrototypes.numInstances() == nPrototypes; 
-				} 
-				// Averaging distances
-				for (int i = 0; i < dist.length; i++)  totalDist += dist[i];
-				return totalDist / w1.numInstances();
-				
-			} catch (Exception e) {
-				e.printStackTrace();
-			}  
-			return Double.POSITIVE_INFINITY; 
-		}
-
-		public Instances getNearestPrototypes(Instance i, Instances topologyPrototypes, int nPrototypes) throws Exception {
-			// Set converters to use WEKAS filters
-			SamoaToWekaInstanceConverter converter = new SamoaToWekaInstanceConverter();
-			WekaToSamoaInstanceConverter deconverter = new WekaToSamoaInstanceConverter();
-			
-			// Instantiate NN search object and return results 
-			NearestNeighbourSearch m_NNSearch = new LinearNNSearch();
-		    m_NNSearch.setInstances(converter.wekaInstances(topologyPrototypes));
-		    //TODO: distances using a kernel => m_NNSearch.getDistances();
-		    return deconverter.samoaInstances(m_NNSearch.kNearestNeighbours(converter.wekaInstance(i), nPrototypes));
-		    
-		    // Instances neighbours = deconverter.samoaInstances(m_NNSearch.kNearestNeighbours(converter.wekaInstance(i), nPrototypes));
-			// if (this.debugNN) System.out.println("SIZE AFTER NN: "+neighbours.numInstances());
-			// if (this.debugNN) System.out.println("TSIZE BEFORE NN:  "+topologyPrototypes.numInstances());
-		    // return neighbours;
+			if (w1.numInstances() == 0 || topologyPrototypes.numInstances() == 0) {
+				return Double.POSITIVE_INFINITY;
+			}
+			double totalDist = 0.0;
+			for (int i = 0; i < w1.numInstances(); i++) {
+				Instance inst = w1.get(i);
+				double minDist = Double.POSITIVE_INFINITY;
+				for (int j = 0; j < topologyPrototypes.numInstances(); j++) {
+					double d = computeDistance(inst, topologyPrototypes.get(j));
+					if (d < minDist) {
+						minDist = d;
+					}
+				}
+				totalDist += minDist;
+			}
+			return totalDist / w1.numInstances();
 		}
 
 		
@@ -1609,7 +1594,36 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 		}
 		
 		public void addLearnerToGroup(int groupID, Concept learner) {
+			if (this.maxSize > 0) {
+				evictLeastUsedIfFull();
+			}
 			this.history.get(groupID).put(learner.historyIndex, learner); // line 28
+		}
+
+		private void evictLeastUsedIfFull() {
+			int total = 0;
+			for (Group g : this.history.values()) total += g.groupList.size();
+			if (total < this.maxSize) return;
+			Integer victimGroup = null;
+			Integer victimKey = null;
+			int minUses = Integer.MAX_VALUE;
+			int oldestId = Integer.MAX_VALUE;
+			for (Group g : this.history.values()) {
+				for (Concept c : g.groupList.values()) {
+					if (c.timesUsed < minUses || (c.timesUsed == minUses && c.historyIndex < oldestId)) {
+						minUses = c.timesUsed;
+						oldestId = c.historyIndex;
+						victimGroup = g.getID();
+						victimKey = c.historyIndex;
+					}
+				}
+			}
+			if (victimGroup != null && victimKey != null) {
+				this.history.get(victimGroup).groupList.remove(victimKey);
+				if (this.history.get(victimGroup).groupList.isEmpty()) {
+					this.history.remove(victimGroup);
+				}
+			}
 		}
 		
 		public Collection<Concept> getConceptsFromGroup(int groupID){

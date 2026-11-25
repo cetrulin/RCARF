@@ -187,6 +187,7 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 	ConceptHistory CH;
 	int CHid;
 	int groupId;
+	boolean isOnWarningWindow;
 	
 	///////////////////////////////////////
 	//
@@ -322,14 +323,8 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 		if (!this.disableDriftDetectionOption.isSet()) { // && !this.ensemble[ensemblePos].isBackgroundLearner) 
 			boolean correctlyClassifies = this.ensemble[ensemblePos].correctlyClassifies(instance);
 
-			// Step 2.1: Check for warning only if useBkgLearner is active. The topology gets updated either way
-			// if (!this.disableBackgroundLearnerOption.isSet()) // in EPCH warning detection should always be active
-			detectWarning(ensemblePos, instance, correctlyClassifies); //else 
-			this.topology.trainOnInstanceImpl(instance);  // Step 2.1.1 (Lines 13-15)
-			// TODO: this design won't work for multiple classifiers, the training of the topology should be at the upper level
-			// TODO: topology should not be in this function. 
-			// it should be in the previous one as otherwise we'll send X copies of the same instance each time, 
-			// depending on the number of classifiers
+			// Step 2.1: Check for warning only if useBkgLearner is active. The topology gets updated inside detectWarning when not in warning.
+			detectWarning(ensemblePos, instance, correctlyClassifies);
 			
 			// Step 2.2: Check for drift
 			detectDrift(ensemblePos, correctlyClassifies);
@@ -466,11 +461,10 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 		if (this.W.size() >= this.warningWindowSizeThresholdOption.getValue()) resetWarningWindow(ensemblePos); // Line 8
 		 		
 		// Step 3: Either warning window training/buffering or topology update (Lines 10-15)
-		if (this.W.size() >= 1 && this.W.size() < this.warningWindowSizeThresholdOption.getValue()) { // && 
-				// this.ensemble[ensemblePos].bkgLearner != null) { // when W is in that range, bkgLearner != null (tested), so the condition is not required
-				this.ensemble[ensemblePos].bkgLearner.classifier.trainOnInstance(instance); // Line 11
-			this.W.add(instance); // Line 12
-		} else this.topology.trainOnInstanceImpl(instance); // Step 3.1: Lines 13-15 (TODO: should we feed a given instance to GNG many times?)
+		if (this.isOnWarningWindow && this.ensemble[ensemblePos].bkgLearner != null) {
+			this.ensemble[ensemblePos].bkgLearner.classifier.trainOnInstance(instance); // Line 11
+			this.W.add(instance.copy()); // Line 12
+		} else this.topology.trainOnInstanceImpl(instance); // Step 3.1: Lines 13-15
 
 		// Step 4: line 16: warning detected?
 		if (this.warningDetectionMethod.getChange()) { 
@@ -485,7 +479,8 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 		this.ensemble[ensemblePos].tmpCopyOfClassifier = null;
 		this.warningDetectionMethod = ((ChangeDetector) getPreparedClassOption(this.warningDetectionMethodOption)).copy(); // restart warning 
 		this.W.delete(); // Lines 8 and 19 (it also initializes the object W)
-		this.CH.decreaseNumberOfWarnings(ensemblePos); // update applicable concepts
+		this.isOnWarningWindow = false;
+		if (this.CH != null) this.CH.decreaseNumberOfWarnings(ensemblePos); // update applicable concepts
 	}
 	
 	/** 
@@ -517,6 +512,7 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 
 		// Step 3: Create background Classifier
 		this.ensemble[ensemblePos].createBkgClassifier(this.lastWarningOn); // line 18: create background classifier	
+		this.isOnWarningWindow = true;
 	}
 
 
@@ -572,7 +568,7 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 				int previousGroup = this.CH.findGroup(tmpPrototypes); // line 25
 				if (this.CH.size() == 0 || previousGroup == -1) { // line 26
 					previousGroup = this.groupId++;
-					this.CH.createNewGroup(previousGroup, tmpPrototypes, this.newTopology); // line 27	
+					this.CH.createNewGroup(previousGroup, tmpPrototypes, this.topology); // line 27	
 				} pushToConceptHistory(ensemblePos, previousGroup); // lines 29-30
 				
 				if (!this.disableRecurringDriftDetectionOption.isSet()) 
@@ -580,6 +576,7 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 				this.ensemble[ensemblePos].reset(); // reset base classifier  (step 4)
 				if (this.newTopology != null) this.topology = updateExtraTopology(this.newTopology, this.W); // line 34 
 				this.W.delete(); // line 35 
+				this.isOnWarningWindow = false;
 			}
 		}
 	}
@@ -1278,8 +1275,7 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 			this.BepsilonOption = BepsilonOption;
 			this.NepsilonOption = NepsilonOption;
 			
-			// inverting parameter as for topology objects the default flag value should be set
-			this.classAsAttributeOption = classNotAsAttributeOption;
+			// inverting parameter without mutating caller's FlagOption
 			this.classAsAttributeOption.setValue(!classNotAsAttributeOption.isSet());
 			
 			this.learner = new GNG(this.GNGLambdaOption, this.alfaOption, this.maxAgeOption, this.constantOption,
@@ -1339,8 +1335,11 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 		}
 
 		public EPCHBaseLearner copyConcept(int key) {
-			EPCHBaseLearner aux = groupList.get(key).getBaseLearner();
-			return aux;
+			EPCHBaseLearner orig = groupList.get(key).getBaseLearner();
+			return new EPCHBaseLearner(orig.indexOriginal, orig.classifier.copy(),
+					(BasicClassificationPerformanceEvaluator) orig.evaluator.copy(), orig.createdOn,
+					orig.useDriftDetector, orig.isBackgroundLearner, orig.useRecurringLearner, orig.isOldLearner,
+					orig.windowProperties != null ? orig.windowProperties.copy() : null, null, orig.warningWindowSizeThreshold);
 		}
 
 		// Getters
@@ -1497,7 +1496,7 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 					group = g.getID();
 				}
 			}
-			if (dist < this.maxDistanceThreshold) {
+			if (group != -1 && min < this.maxDistanceThreshold) {
 				return group;
 			} else
 				return -1;
