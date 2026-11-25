@@ -46,6 +46,7 @@ import java.util.Map.Entry;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import moa.classifiers.trees.ARFHoeffdingTree;
 import moa.evaluation.BasicClassificationPerformanceEvaluator;
@@ -54,8 +55,6 @@ import moa.evaluation.LearningPerformanceEvaluator;
 
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-
-import javax.sound.midi.Synthesizer;
 
 import moa.classifiers.core.driftdetection.EvolvingADWINChangeDetector;
 import moa.classifiers.core.driftdetection.EvolvingChangeDetector;
@@ -247,6 +246,7 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
     protected BasicClassificationPerformanceEvaluator evaluator;
 
     private ExecutorService executor;
+    protected ConceptHistory conceptHistory;
     
     PrintWriter eventsLogFile;
     
@@ -257,7 +257,12 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
         this.subspaceSize = 0;
         this.instancesSeen = 0;
         this.evaluator = new BasicClassificationPerformanceEvaluator();
+        this.conceptHistory = null;
         
+        if (this.executor != null) {
+            this.executor.shutdownNow();
+            this.executor = null;
+        }
         // Multi-threading
         int numberOfJobs;
         if(this.numberOfJobsOption.getValue() == -1) 
@@ -277,8 +282,8 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
             initEnsemble(instance);
         
         // 1 If the concept history is ready and it contains old models, testing in each old model internal evaluator (to compare against bkg one)
-        if (!disableRecurringDriftDetectionOption.isSet() && ConceptHistory.historyList != null && ConceptHistory.modelsOnWarning.containsValue(true) && ConceptHistory.historyList.size() > 0) {
-	        	for (Concept oldModel : ConceptHistory.historyList.values()) { // TODO: test this
+        if (!disableRecurringDriftDetectionOption.isSet() && conceptHistory.historyList != null && conceptHistory.modelsOnWarning.containsValue(true) && conceptHistory.historyList.size() > 0) {
+	        	for (Concept oldModel : conceptHistory.historyList.values()) { // TODO: test this
 	            DoubleVector oldModelVote = new DoubleVector(oldModel.ConceptLearner.getVotesForInstance(instance)); // TODO. this
 	            // // System.out.println("I'm classifier number #"+oldModel.Concept.classifier.calcByteSize()+" created on: "+oldModel.Concept.createdOn+"  and last error was:  "+oldModel.Concept.lastError);
         			if (oldModel.ConceptLearner.internalWindowEvaluator != null && 
@@ -381,9 +386,7 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
   
         // Only initialize Concept History if explicit recurring concepts handling is enabled
         if(!this.disableRecurringDriftDetectionOption.isSet()) {
-			ConceptHistory.lastID = 0;
-			ConceptHistory.historyList = new ConcurrentHashMap<Integer,Concept> ();
-			ConceptHistory.modelsOnWarning = new ConcurrentHashMap<Integer,Boolean> ();
+			this.conceptHistory = new ConceptHistory();
         }
         
         try { // Start events logging and print headers
@@ -453,10 +456,14 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
         		        		
         		// What ADWIN intervals to use depending on ensemble position. 
         		// asuarez: TO-DO. Check if some p's are not ever used again after being sent to the Concept History
-        		int p_config = ((int) Math.floor((i+1)/(p_allocation))); 
-        		if ((i+1) % p_allocation == 0) p_config = ((int) Math.floor((i+1)/(p_allocation))) -1; // Making sure that the distribution is equally distributed when the ensemble size is a multiple of the amount of different configs
-        		// System.out.println("Tree #"+(i+1)+" - config for ensemble size of "+this.ensembleSizeOption.getValue()+", is "+p_config);
-        		if(p_config >= p_deltas.length) p_config = i % p_deltas.length;
+        		int p_config;
+        		if (p_allocation == 0) {
+        			p_config = i % p_deltas.length;
+        		} else {
+        			p_config = ((int) Math.floor((i+1)/(p_allocation))); 
+        			if ((i+1) % p_allocation == 0) p_config = ((int) Math.floor((i+1)/(p_allocation))) -1; // Making sure that the distribution is equally distributed when the ensemble size is a multiple of the amount of different configs
+        			if(p_config >= p_deltas.length) p_config = i % p_deltas.length;
+        		}
         		
         		//System.out.println("For tree #"+i+": config is: "+p_config);
         		
@@ -606,16 +613,16 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
 
             // System.out.println();
             // System.out.println("-------------------------------------------------");
-            // System.out.println("RESET (WARNING OFF) IN MODEL #"+this.indexOriginal+". Warning flag status (activeModelPos, Flag): "+ConceptHistory.modelsOnWarning);
+            // System.out.println("RESET (WARNING OFF) IN MODEL #"+this.indexOriginal+". Warning flag status (activeModelPos, Flag): "+conceptHistory.modelsOnWarning);
             // System.out.println("-------------------------------------------------");
             // System.out.println();
 		   // Transition to the best bkg or retrieved old learner
         		if (this.useBkgLearner && this.bkgLearner != null) {
-        		   if(this.useRecurringLearner) { // && ConceptHistory.historyList != null && ConceptHistory.historyList.size() > 0) {
+        		   if(this.useRecurringLearner) { // && conceptHistory.historyList != null && conceptHistory.historyList.size() > 0) {
            			// 1 Decrease amount of warnings in concept history and from evaluators
-        				ConceptHistory.modelsOnWarning.put(this.indexOriginal, false);
-        	            if(ConceptHistory.historyList != null && ConceptHistory.historyList.size() > 0) {
-        			        	for (Concept oldModel : ConceptHistory.historyList.values()) {
+        				conceptHistory.modelsOnWarning.put(this.indexOriginal, false);
+        	            if(conceptHistory.historyList != null && conceptHistory.historyList.size() > 0) {
+        			        	for (Concept oldModel : conceptHistory.historyList.values()) {
         			        		if (oldModel.ConceptLearner.internalWindowEvaluator != null && 
         			        				oldModel.ConceptLearner.internalWindowEvaluator.containsIndex(this.indexOriginal) )
         				        		((DynamicWindowClassificationPerformanceEvaluator) 
@@ -624,9 +631,11 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
         	            }
         			   // 2.1 Move copy of active model made before warning to Concept History. Its history ID will be the last one in the history (= size)
         			   // Clean the copy afterwards.
-        			   this.tmpCopyOfModel.addHistoryID(ConceptHistory.nextID());
-        			   ConceptHistory.historyList.put(this.tmpCopyOfModel.historyIndex, this.tmpCopyOfModel);
-        			   this.tmpCopyOfModel = null;
+        			   if (this.tmpCopyOfModel != null) {
+        				   this.tmpCopyOfModel.addHistoryID(conceptHistory.nextID());
+        				   conceptHistory.historyList.put(this.tmpCopyOfModel.historyIndex, this.tmpCopyOfModel);
+        				   this.tmpCopyOfModel = null;
+        			   }
         			   //// System.out.println("MODEL ADDED TO CONCEPT HISTORY!");
         			   // Consideration *: This classifier is added to the concept history, but it wont be considered by other classifiers on warning until their next warning.
         			   // If it becomes necessary in terms of implementation for this concept, to be considered immediately by the other examples in warning,
@@ -713,7 +722,7 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
         
         // Saves a backup of the active model that raised a warning to be stored in the concept history in case of drift.
         public void saveCurrentConcept() {  
-        		// if(ConceptHistory.historyList != null) // System.out.println("CONCEPT HISTORY SIZE IS: "+ConceptHistory.historyList.size());
+        		// if(conceptHistory.historyList != null) // System.out.println("CONCEPT HISTORY SIZE IS: "+conceptHistory.historyList.size());
         	
         		// 1 Update last error before warning of the active classifier
         		// This error is the total fraction of examples incorrectly classified since this model was active until now.
@@ -745,9 +754,9 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
 	    	        
 	    	        // 1 Updating objects with warning. Turns on windows flag in Concept History.
 	            // Also, if the concept history is ready and it contains old models, add prior estimation and window size to each concepts history learner
-	        		ConceptHistory.modelsOnWarning.put(this.indexOriginal, true);
-	            if(ConceptHistory.historyList != null && ConceptHistory.historyList.size() > 0) {
-			        	for (Concept oldModel : ConceptHistory.historyList.values()) {
+	        		conceptHistory.modelsOnWarning.put(this.indexOriginal, true);
+	            if(conceptHistory.historyList != null && conceptHistory.historyList.size() > 0) {
+			        	for (Concept oldModel : conceptHistory.historyList.values()) {
 			        		// If the concept internal evaluator has been initialized for any other model on warning, add window size and last error of current model on warning 
 			        		if (oldModel.ConceptLearner.internalWindowEvaluator != null) {
 			        			//// System.out.println("ADDING VALUES TO INTERNAL EVALUATOR OF CONCEPT "+oldModel.historyIndex+" IN POS "+this.indexOriginal);
@@ -812,7 +821,7 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
             // 4 Create a new bkgLearner object
             this.bkgLearner = new RCARFBaseLearner(indexOriginal, bkgClassifier, bkgEvaluator, this.lastWarningOn, 
             		this.useBkgLearner, this.useDriftDetector, this.driftSetting, this.warningSetting, true, this.useRecurringLearner, false, 
-            									   this.windowProperties, bkgInternalWindowEvaluator, eventsLogFile, logLevel); // added last inputs parameter by @suarezcetrulo        	
+            									   this.windowProperties != null ? this.windowProperties.copy() : null, bkgInternalWindowEvaluator, eventsLogFile, logLevel); // added last inputs parameter by @suarezcetrulo        	
         }
      
         // Rank of concept history windows and make decision against bkg model
@@ -820,7 +829,7 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
         		HashMap<Integer, Double> ranking = new HashMap<Integer, Double>();
         		// 1 - Add old models: get each concept score for current warning model (this.indexOriginal - pos of this model with active warning in ensemble)
         		// Concept History owns only one learner per historic concept. But each learner saves all model's independent window size and priorEstimation in a HashMap.
-	    		for (Concept auxConcept : ConceptHistory.historyList.values()) 
+	    		for (Concept auxConcept : conceptHistory.historyList.values()) 
 	    			// Only take into consideration Concepts sent to the Concept History after the current model raised a warning (see this consideration in reset*) 
 	    			if (auxConcept.ConceptLearner.internalWindowEvaluator != null && 
 	    					auxConcept.ConceptLearner.internalWindowEvaluator.containsIndex(this.indexOriginal))
@@ -839,7 +848,10 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
 		    			if (eventsLogFile != null && logLevel >= 0 ) logEvent(getRecurringDriftEvent(ranking));	
 		    			
 		    			// Extracts best recurring learner form concept history. It no longer exists in the concept history
-	    	            this.bkgLearner = ConceptHistory.extractConcept(getMinKey(ranking)); // this also retrieves warning and drift options
+		    			RCARFBaseLearner extracted = conceptHistory.extractConcept(getMinKey(ranking)); // this also retrieves warning and drift options
+		    			if (extracted != null) {
+		    				this.bkgLearner = extracted;
+		    			}
 		    		} else {
 		    			// System.out.println("The minimum recurrent concept error: "+
 		    			//		Collections.min(ranking.values())+" is not better than the bbk learner one: "+
@@ -858,7 +870,7 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
         /*private HashMap<Integer, Double> updateWithExistingConcepts(HashMap<Integer, Double> ranking) {
 	    		if(ranking.size()>0) {
 	    			int min = getMinKey(ranking);
-	    			if(!ConceptHistory.historyList.containsKey(min)) {
+	    			if(!conceptHistory.historyList.containsKey(min)) {
 	    				ranking.remove(min);
 	    				if(ranking.size()>0) ranking = updateWithExistingConcepts(ranking);
 		    		}
@@ -895,9 +907,9 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
 		    		String.valueOf(this.warningSetting), 
 		    		String.valueOf(this.driftSetting), 
 				String.valueOf(this.createdOn), String.valueOf(this.evaluator.getFractionIncorrectlyClassified()), 
-				String.valueOf(this.useRecurringLearner ? ConceptHistory.modelsOnWarning.size() : "N/A"),
-				String.valueOf(this.useRecurringLearner ? ConceptHistory.getNumberOfActiveWarnings() : "N/A"),
-				String.valueOf(this.useRecurringLearner ? ConceptHistory.modelsOnWarning : "N/A"), "N/A", "N/A", "N/A"};
+				String.valueOf(this.useRecurringLearner ? conceptHistory.modelsOnWarning.size() : "N/A"),
+				String.valueOf(this.useRecurringLearner ? conceptHistory.getNumberOfActiveWarnings() : "N/A"),
+				String.valueOf(this.useRecurringLearner ? conceptHistory.modelsOnWarning : "N/A"), "N/A", "N/A", "N/A"};
         		
         		return (new Event(eventLog));
         }
@@ -906,8 +918,8 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
         	
             // System.out.println();
             // System.out.println("-------------------------------------------------");
-            // System.out.println("WARNING ON IN MODEL #"+this.indexOriginal+". Warning flag status (activeModelPos, Flag): "+ConceptHistory.modelsOnWarning);
-            // System.out.println("CONCEPT HISTORY STATE AND APPLICABLE FROM THIS WARNING IS: "+ConceptHistory.historyList.keySet().toString());
+            // System.out.println("WARNING ON IN MODEL #"+this.indexOriginal+". Warning flag status (activeModelPos, Flag): "+conceptHistory.modelsOnWarning);
+            // System.out.println("CONCEPT HISTORY STATE AND APPLICABLE FROM THIS WARNING IS: "+conceptHistory.historyList.keySet().toString());
             // System.out.println("-------------------------------------------------");
             // System.out.println();
         	
@@ -917,10 +929,10 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
 		    		String.valueOf(this.warningSetting), 
 		    		String.valueOf(this.driftSetting), 
     				String.valueOf(this.createdOn), String.valueOf(this.evaluator.getFractionIncorrectlyClassified()), 
-    				String.valueOf(this.useRecurringLearner ? ConceptHistory.modelsOnWarning.size() : "N/A"),
-    				String.valueOf(this.useRecurringLearner ? ConceptHistory.getNumberOfActiveWarnings() : "N/A"),
-    				String.valueOf(this.useRecurringLearner ? ConceptHistory.modelsOnWarning : "N/A"), 
-    				this.useRecurringLearner ? ConceptHistory.historyList.keySet().toString() : "N/A", "N/A", "N/A"};
+    				String.valueOf(this.useRecurringLearner ? conceptHistory.modelsOnWarning.size() : "N/A"),
+    				String.valueOf(this.useRecurringLearner ? conceptHistory.getNumberOfActiveWarnings() : "N/A"),
+    				String.valueOf(this.useRecurringLearner ? conceptHistory.modelsOnWarning : "N/A"), 
+    				this.useRecurringLearner ? conceptHistory.historyList.keySet().toString() : "N/A", "N/A", "N/A"};
         		//1279,1,WARNING-START,0.74,{F,T,F;F;F;F},...
 
         		return (new Event(warningLog));
@@ -934,9 +946,9 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
 				    		String.valueOf(this.warningSetting), 
 				    		String.valueOf(this.driftSetting), 
 						String.valueOf(this.createdOn), String.valueOf(this.evaluator.getFractionIncorrectlyClassified()), 
-						String.valueOf(this.useRecurringLearner ? ConceptHistory.modelsOnWarning.size() : "N/A"), 
-						String.valueOf(this.useRecurringLearner ? ConceptHistory.getNumberOfActiveWarnings() : "N/A"), 
-						String.valueOf(this.useRecurringLearner ? ConceptHistory.modelsOnWarning : "N/A"), 
+						String.valueOf(this.useRecurringLearner ? conceptHistory.modelsOnWarning.size() : "N/A"), 
+						String.valueOf(this.useRecurringLearner ? conceptHistory.getNumberOfActiveWarnings() : "N/A"), 
+						String.valueOf(this.useRecurringLearner ? conceptHistory.modelsOnWarning : "N/A"), 
 						"N/A", "N/A", "N/A"};    
 				    		
         		return (new Event(eventLog));
@@ -947,7 +959,7 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
 	    		//// System.out.println(ranking.size()); // TODO: debugging
 	    		//// System.out.println(getMinKey(ranking)); // TODO: debugging
         	
-            // System.out.println("RECURRING DRIFT RESET IN POSITION #"+this.indexOriginal+" TO MODEL #"+ConceptHistory.historyList.get(getMinKey(ranking)).ensembleIndex); //+this.bkgLearner.indexOriginal);   
+            // System.out.println("RECURRING DRIFT RESET IN POSITION #"+this.indexOriginal+" TO MODEL #"+conceptHistory.historyList.get(getMinKey(ranking)).ensembleIndex); //+this.bkgLearner.indexOriginal);   
 
         		String [] eventLog = {
     		        String.valueOf(this.lastDriftOn), "RECURRING DRIFT", String.valueOf(this.indexOriginal), 
@@ -955,11 +967,11 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
 		    		String.valueOf(this.warningSetting), 
 		    		String.valueOf(this.driftSetting), 
 		    		String.valueOf(this.createdOn), String.valueOf(this.evaluator.getFractionIncorrectlyClassified()), 
-		    		String.valueOf(this.useRecurringLearner ? ConceptHistory.modelsOnWarning.size() : "N/A"),
-		    		String.valueOf(this.useRecurringLearner ? ConceptHistory.getNumberOfActiveWarnings() : "N/A"), 
-		    		String.valueOf(this.useRecurringLearner ? ConceptHistory.modelsOnWarning : "N/A"), "N/A",
-		    		String.valueOf(ConceptHistory.historyList.get(getMinKey(ranking)).ensembleIndex),
-		    		String.valueOf(ConceptHistory.historyList.get(getMinKey(ranking)).createdOn)
+		    		String.valueOf(this.useRecurringLearner ? conceptHistory.modelsOnWarning.size() : "N/A"),
+		    		String.valueOf(this.useRecurringLearner ? conceptHistory.getNumberOfActiveWarnings() : "N/A"), 
+		    		String.valueOf(this.useRecurringLearner ? conceptHistory.modelsOnWarning : "N/A"), "N/A",
+		    		String.valueOf(conceptHistory.historyList.get(getMinKey(ranking)).ensembleIndex),
+		    		String.valueOf(conceptHistory.historyList.get(getMinKey(ranking)).createdOn)
         		};    
 	    		
         		return (new Event(eventLog));
@@ -999,23 +1011,22 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
     
     
     //Concept_history = (list of concept_representations)
-    // Static and concurrent for all DTs that run in parallel
+    // Concurrent per-ensemble Concept History for all DTs that run in parallel
     public static class ConceptHistory {
 
     		// Concurrent Concept History List
-    		public static ConcurrentHashMap<Integer,Concept> historyList; // = new ConcurrentHashMap<Integer,Concept> ();
-    		public static int lastID = 0;
+    		public ConcurrentHashMap<Integer,Concept> historyList = new ConcurrentHashMap<Integer,Concept>();
+    		public AtomicInteger lastID = new AtomicInteger(0);
     		
     		// List of ensembles with an active warning used as to determine if the history list evaluators should be in use
-    		public static ConcurrentHashMap<Integer,Boolean> modelsOnWarning; // = new ConcurrentHashMap<Integer,Boolean> ();
+    		public ConcurrentHashMap<Integer,Boolean> modelsOnWarning = new ConcurrentHashMap<Integer,Boolean>();
 
-	    public static RCARFBaseLearner extractConcept(int key) {
-	    		RCARFBaseLearner aux = historyList.get(key).getBaseLearner();
-	    		historyList.remove(key);
-			return aux;
+	    public RCARFBaseLearner extractConcept(int key) {
+	    		Concept removed = historyList.remove(key);
+			return removed != null ? removed.getBaseLearner() : null;
 	    }
 	    
-	    public static int getNumberOfActiveWarnings() {
+	    public int getNumberOfActiveWarnings() {
 	    		int count = 0;
 	    		for(Boolean value: modelsOnWarning.values()) if (value) count++;
 	    		return count;
@@ -1026,8 +1037,8 @@ public class EvolvingRCARF extends AbstractClassifier implements MultiClassClass
         }
 	        
         // Getters
-        public static int nextID() {
-        		return lastID++;
+        public int nextID() {
+        		return lastID.getAndIncrement();
         }
     }
     

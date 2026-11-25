@@ -80,19 +80,19 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
 		this.createdBy = createdBy;
     }
     
-    public void addModel(int indexPos, double priorEstimation, int windowSize) {
+    public synchronized void addModel(int indexPos, double priorEstimation, int windowSize) {
 		((DynamicWindowEstimator) this.weightCorrect).addNewModel(indexPos, priorEstimation, windowSize);
     }
     
-    public void deleteModel(int indexPos) {
+    public synchronized void deleteModel(int indexPos) {
 		((DynamicWindowEstimator) this.weightCorrect).deleteModel(indexPos);
     }
     
-    public boolean containsIndex(int indexPos) {
+    public synchronized boolean containsIndex(int indexPos) {
     		return ((DynamicWindowEstimator) this.weightCorrect).contains(indexPos);
     }
     
-    public int getAmountOfApplicableModels() {
+    public synchronized int getAmountOfApplicableModels() {
 	 	return ((DynamicWindowEstimator) this.weightCorrect).getAmountOfApplicableModels();
     }
     
@@ -105,25 +105,25 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
     // Getters and Setters
     
     // this could be lower than window size if the buffer is not full.
-    public int getCurrentSize(int ensembleIndex) {
+    public synchronized int getCurrentSize(int ensembleIndex) {
 	 	return ((DynamicWindowEstimator) weightCorrect).getActualSize(ensembleIndex);
     }
     
     //  window size is the maximum of the dynamic length buffer
-    public int getWindowSize(int ensembleIndex) {
+    public synchronized int getWindowSize(int ensembleIndex) {
 	 	return ((DynamicWindowEstimator) weightCorrect).getMaxCurrentSize(ensembleIndex);
     }
         
     // Overriding next few methods to avoid calculating extra evaluators for kappa statistics - @suarezcetrulo 
     @Override
-    public void reset(){
+    public synchronized void reset(){
     		// System.out.println("Manual reset");
 		this.windowSize =  this.defaultSize;
 	    reset(this.numClasses);
 	} 
 	    
     @Override
-    public void reset(int numClasses) {
+    public synchronized void reset(int numClasses) {
 		// System.out.println("Reset by 'addResult'");
         this.numClasses = numClasses;
         this.weightCorrect = newEstimator(); // it will started from scratch for only one window size. 
@@ -133,7 +133,7 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
     }
 
     @Override
-    public void addResult(Example<Instance> example, double[] classVotes) {
+    public synchronized void addResult(Example<Instance> example, double[] classVotes) {
         Instance inst = example.getData();
         double weight = inst.weight();
         if (inst.classIsMissing() == false){
@@ -161,12 +161,12 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
     }
     
     // The index sent belongs to the active model that the evaluator compares against (it should be an applicable model)
-    public double getFractionIncorrectlyClassified(int ensembleIndex) {
+    public synchronized double getFractionIncorrectlyClassified(int ensembleIndex) {
         return 1.0 - getFractionCorrectlyClassified(ensembleIndex) ;
     }
     
     // The index sent belongs to the active model  against (it should be an applicable model)
-    public double getFractionCorrectlyClassified(int ensembleIndex) {
+    public synchronized double getFractionCorrectlyClassified(int ensembleIndex) {
         return ((DynamicWindowEstimator) this.weightCorrect).estimation(ensembleIndex);
     }
     
@@ -322,7 +322,7 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
 			
   			// Remove oldest if it surpasses the maximum windowSize + three times the increments. 
 			// Also allow it to grow at the start till the minimum size if the default size is lower than this.
-         	if(this.window.size()>(Math.max((Collections.max(this.SizeWindows.values())+this.sizeIncrements*3), this.minSize+this.sizeIncrements*3))) {
+         	if(!this.SizeWindows.isEmpty() && this.window.size()>(Math.max((Collections.max(this.SizeWindows.values())+this.sizeIncrements*3), this.minSize+this.sizeIncrements*3))) {
          		this.window.remove(0);
          	}
 	  		
@@ -418,7 +418,7 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
          					// if getActualSize(pos) < this.minSize, then keep growing inside the limits (do not remove any value)
          					// if window size is greater than minimum size, the evaluator is decreasing size and its the maximum size model, we delete a value in the window
          					if (this.SizeWindows.get(pos) == Collections.max(this.SizeWindows.values())){
-         						for(int n = 1; n <= this.sizeIncrements ; n++) this.window.remove(0); // we do it as many times as values we insert per time (sizeIncrements)
+         						for(int n = 1; n <= this.sizeIncrements && !this.window.isEmpty(); n++) this.window.remove(0); // we do it as many times as values we insert per time (sizeIncrements)
          					}
 
          				}
@@ -438,7 +438,7 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
          					// if getActualSize(pos) < this.minSize, then keep growing inside the limits (do not remove any value)
          					// if window size is greater than minimum size, it is decreasing size and its the maximum size model, we delete a value in the window to free space
          					if (this.SizeWindows.get(pos) == Collections.max(this.SizeWindows.values())){
-         						for(int n = 1; n <= this.sizeIncrements ; n++) this.window.remove(0); // we do it as many times as values we insert per time (sizeIncrements)
+         						for(int n = 1; n <= this.sizeIncrements && !this.window.isEmpty(); n++) this.window.remove(0); // we do it as many times as values we insert per time (sizeIncrements)
          					}
          				}
          			}
@@ -460,7 +460,7 @@ public class DynamicWindowClassificationPerformanceEvaluator extends BasicClassi
          					// if getActualSize(pos) < this.minSize, then keep growing inside the limits (do not remove any value)
          					// if window size is greater than minimum size, it is decreasing size and its the maximum size model, we delete a value in the window
          					if (this.SizeWindows.get(pos) == Collections.max(this.SizeWindows.values())){
-         						for(int n = 1; n <= this.sizeIncrements ; n++) this.window.remove(0); // we do it as many times as values we insert per time (sizeIncrements)
+         						for(int n = 1; n <= this.sizeIncrements && !this.window.isEmpty(); n++) this.window.remove(0); // we do it as many times as values we insert per time (sizeIncrements)
          					}
          				}
              		}

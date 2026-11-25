@@ -258,7 +258,7 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 			this.topology = new Topology(this.topologyLambdaOption, this.alfaOption, this.maxAgeOption, 
 				this.constantOption, this.BepsilonOption, this.NepsilonOption, this.classNotAsAnAttributeInTopologyOption); // algorithm line 1
 			this.topology.resetLearningImpl();
-		} System.out.println("prototypes created in topology:" + this.topology.getNumberOfPrototypesCreated());
+		} if (this.topology != null) System.out.println("prototypes created in topology:" + this.topology.getNumberOfPrototypesCreated());
 
 		if (this.ensemble == null) initEnsemble(instance); // algorithm lines 2-3
 
@@ -900,7 +900,7 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 	public Event getRecurringDriftEvent(Integer indexOfBestRankedInCH, int group, int indexOriginal) {
 		System.out.println(indexOfBestRankedInCH); // TODO: debugging
 		System.out.println("RECURRING DRIFT RESET IN POSITION #"+indexOriginal+" TO MODEL #"+
-		CH.get(indexOfBestRankedInCH).groupList.get(indexOfBestRankedInCH).ensembleIndex);
+		CH.get(group).groupList.get(indexOfBestRankedInCH).ensembleIndex);
 		// +this.bkgLearner.indexOriginal);
 		String[] eventLog = { String.valueOf(this.lastDriftOn), "RECURRING DRIFT", String.valueOf(indexOriginal),
 				String.valueOf(this.ensemble[indexOriginal].evaluator.getPerformanceMeasurements()[1].getValue()),
@@ -1137,7 +1137,7 @@ public class EPCH extends AbstractClassifier implements MultiClassClassifier {
 			// 4 Create a new bkgLearner object
 			this.bkgLearner = new EPCHBaseLearner(indexOriginal, bkgClassifier, bkgEvaluator, lastWarningOn, //this.useBkgLearner, 
 					this.useDriftDetector, true, this.useRecurringLearner, false, 
-					this.windowProperties, bkgInternalWindowEvaluator, this.warningWindowSizeThreshold);
+					this.windowProperties != null ? this.windowProperties.copy() : null, bkgInternalWindowEvaluator, this.warningWindowSizeThreshold);
 		}
 
 		/** 

@@ -538,27 +538,29 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 			} else if (this.eventsLogFile != null && this.logLevelOption.getValue() >= 1)  // TODO: remove this.eventsLogFile != null as a condition
 				logEvent(getBkgDriftEvent());  // TODO. Refactor this logEvent function so it's inside of 'registerDrift' and not wrapping it
 			if (!falseAlarm) {  // Step 2
-				// Insertion in CH (Lines 23-26)
-				Instances tmpPrototypes = this.topology.getPrototypes(); // line 23
-				System.out.println();
-				System.out.println("Pc size:" + this.topology.getNumberOfPrototypesCreated());
-				int previousTopologyGroupId = this.CH.findGroup(tmpPrototypes); // line 24
-				if (this.CH.size() == 0 || previousTopologyGroupId == -1) { // line 25
-					previousTopologyGroupId = this.groupsSeen++;
-					System.out.println("CREATING NEW GROUP: " + previousTopologyGroupId); // TODO: remove once debugged. check that numbers are added correctly
-					this.CH.createNewGroup(previousTopologyGroupId, this.topology.clone()); //, this.newTopology); // line 27
-				} else System.out.println("SELECTING FROM GROUP: " + previousTopologyGroupId); // TODO: remove once debugged. check that numbers are selected correctly
-							
-				// Move copy of active classifier made before warning to Concept History.
-				this.active.tmpCopyOfClassifier.addHistoryID(this.conceptsSeen++);
-				this.CH.addLearnerToGroup(previousTopologyGroupId, this.active.tmpCopyOfClassifier); // line 28  // debug. check that this is not a duplicate. that it's a separate object.
+				if (!this.disableRecurringDriftDetectionOption.isSet() && this.CH != null && this.active.tmpCopyOfClassifier != null) {
+					// Insertion in CH (Lines 23-26)
+					Instances tmpPrototypes = this.topology.getPrototypes(); // line 23
+					System.out.println();
+					System.out.println("Pc size:" + this.topology.getNumberOfPrototypesCreated());
+					int previousTopologyGroupId = this.CH.findGroup(tmpPrototypes); // line 24
+					if (this.CH.size() == 0 || previousTopologyGroupId == -1) { // line 25
+						previousTopologyGroupId = this.groupsSeen++;
+						System.out.println("CREATING NEW GROUP: " + previousTopologyGroupId); // TODO: remove once debugged. check that numbers are added correctly
+						this.CH.createNewGroup(previousTopologyGroupId, this.topology.clone()); //, this.newTopology); // line 27
+					} else System.out.println("SELECTING FROM GROUP: " + previousTopologyGroupId); // TODO: remove once debugged. check that numbers are selected correctly
+								
+					// Move copy of active classifier made before warning to Concept History.
+					this.active.tmpCopyOfClassifier.addHistoryID(this.conceptsSeen++);
+					this.CH.addLearnerToGroup(previousTopologyGroupId, this.active.tmpCopyOfClassifier); // line 28  // debug. check that this is not a duplicate. that it's a separate object.
 
-				if (updateGroupTopologiesOption.isSet()) { // not in v5 of algorithm (line 29 in v4)
-					// OJO: esta linea de abajo necesita agregar .clone/.copy en algun sitio, ya que no esta creando objetos nuevos y  hace que el updatetopology de abajo actualice el objeto de grupo de CH
-					// this.CH.setGroupTopology(previousTopologyGroupId,
-					//		updateTopology(this.CH.copyTopologyFromGroup(previousTopologyGroupId), this.topology.getPrototypes()));
-					// asuarez 02-06.2019. quiza esto incluso fuese mas adecuado
-					this.CH.setGroupTopology(previousTopologyGroupId, this.topology.clone()); // pero entonces perderiamos mucho historico..
+					if (updateGroupTopologiesOption.isSet()) { // not in v5 of algorithm (line 29 in v4)
+						// OJO: esta linea de abajo necesita agregar .clone/.copy en algun sitio, ya que no esta creando objetos nuevos y  hace que el updatetopology de abajo actualice el objeto de grupo de CH
+						// this.CH.setGroupTopology(previousTopologyGroupId,
+						//		updateTopology(this.CH.copyTopologyFromGroup(previousTopologyGroupId), this.topology.getPrototypes()));
+						// asuarez 02-06.2019. quiza esto incluso fuese mas adecuado
+						this.CH.setGroupTopology(previousTopologyGroupId, this.topology.clone()); // pero entonces perderiamos mucho historico..
+					}
 				}
 
 				this.active.reset(); // reset base classifier and transition to bkg or recurring learner (step 3)
@@ -1103,7 +1105,7 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 
 			// 4 Create a new bkgLearner object
 			this.bkgLearner = new EPCHBaseLearner(indexOriginal, bkgClassifier, bkgEvaluator, lastWarningOn, this.useDriftDetector,
-					true, this.useRecurringLearner, false, this.windowProperties, bkgInternalWindowEvaluator);
+					true, this.useRecurringLearner, false, this.windowProperties != null ? this.windowProperties.copy() : null, bkgInternalWindowEvaluator);
 		}
 
 		/**
@@ -1285,6 +1287,9 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 		    try {
 		    		Topology cloned = (Topology) super.clone();
 		    		cloned.setLearner(cloned.getLearner().clone());
+		    		if (this.auxInst != null) {
+		    			cloned.auxInst = (Instance) this.auxInst.copy();
+		    		}
 				return cloned;
 			} catch (CloneNotSupportedException e) {
 				e.printStackTrace();
@@ -1558,7 +1563,7 @@ public class EPCHsingle extends AbstractClassifier implements MultiClassClassifi
 			} catch (Exception e) {
 				e.printStackTrace();
 			}  
-			return (Double) null; 
+			return Double.POSITIVE_INFINITY; 
 		}
 
 		public Instances getNearestPrototypes(Instance i, Instances topologyPrototypes, int nPrototypes) throws Exception {

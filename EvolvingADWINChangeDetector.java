@@ -69,11 +69,13 @@ public class EvolvingADWINChangeDetector extends AbstractEvolvingChangeDetector 
     /* added by asuarez for RCARF 22/05/2018 */
     @Override
     public void setDelta (double d) {
+    		if (adwin == null) resetLearning();
     		adwin.setDelta(d);
     }
 
     @Override
     public double getDelta() {
+    		if (adwin == null) resetLearning();
     		return adwin.getDelta();
     }
     /* ***************************************/
